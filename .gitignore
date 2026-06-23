@@ -26,3 +26,6 @@ Package.resolved.user
 .env
 .env.*
 secrets/
+
+# Supabase CLI local temp
+supabase/.temp/

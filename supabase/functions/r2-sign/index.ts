@@ -4,11 +4,14 @@
 //
 // Request (POST, JSON):
 //   { "action": "upload",   "ext": "mp4", "contentType": "video/mp4" }
+//   { "action": "upload",   "kind": "thumb", "clipId": "<uuid>" }
 //   { "action": "download", "clipId": "<uuid>" }
+//   { "action": "download", "kind": "thumb", "clipId": "<uuid>" }
 //
 // Response:
 //   upload   -> { "uploadUrl": "...", "key": "orgs/<org>/clips/<uuid>.mp4" }
 //   download -> { "downloadUrl": "...", "key": "..." }
+// Thumbnails live at a deterministic key: orgs/<org>/thumbs/<clipId>.jpg
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
@@ -84,7 +87,19 @@ Deno.serve(async (req) => {
   }
   const action = payload.action;
 
+  // A clip's thumbnail lives at a deterministic, org-scoped key, so it needs no
+  // DB lookup — the org prefix alone keeps it isolated per tenant.
+  const thumbKey = (clipId: string) => `orgs/${orgId}/thumbs/${clipId}.jpg`;
+
   if (action === "upload") {
+    const kind = payload.kind === "thumb" ? "thumb" : "clip";
+    if (kind === "thumb") {
+      const clipId = payload.clipId;
+      if (typeof clipId !== "string") return json({ error: "clipId required" }, 400);
+      const key = thumbKey(clipId);
+      const uploadUrl = await presign(key, "PUT");
+      return json({ uploadUrl, key });
+    }
     const ext = String(payload.ext ?? "mp4").replace(/[^a-z0-9]/gi, "").toLowerCase() || "mp4";
     const key = `orgs/${orgId}/clips/${crypto.randomUUID()}.${ext}`;
     const uploadUrl = await presign(key, "PUT");
@@ -94,6 +109,13 @@ Deno.serve(async (req) => {
   if (action === "download") {
     const clipId = payload.clipId;
     if (typeof clipId !== "string") return json({ error: "clipId required" }, 400);
+
+    if (payload.kind === "thumb") {
+      const key = thumbKey(clipId);
+      const downloadUrl = await presign(key, "GET");
+      return json({ downloadUrl, key });
+    }
+
     // RLS guarantees the clip is in the caller's org; also confirms it exists.
     const { data: clip, error: clipErr } = await supabase
       .from("clips")

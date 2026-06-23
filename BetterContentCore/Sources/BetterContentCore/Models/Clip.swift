@@ -13,6 +13,12 @@ public struct Clip: Codable, Identifiable, Sendable, Hashable {
     public var height: Int?
     public var orientation: ClipOrientation?
     public var contentHash: String?
+    /// The video's original creation/recording date, distinct from `createdAt`.
+    public var capturedAt: Date?
+    /// The folder this clip lives in; nil means the library root.
+    public var folderId: UUID?
+    /// R2 key of the poster thumbnail, if one has been uploaded.
+    public var thumbKey: String?
     public var status: ClipStatus
     public let createdAt: Date
     public var updatedAt: Date
@@ -29,6 +35,9 @@ public struct Clip: Codable, Identifiable, Sendable, Hashable {
         case height
         case orientation
         case contentHash = "content_hash"
+        case capturedAt = "captured_at"
+        case folderId = "folder_id"
+        case thumbKey = "thumb_key"
         case status
         case createdAt = "created_at"
         case updatedAt = "updated_at"
@@ -46,6 +55,9 @@ public struct Clip: Codable, Identifiable, Sendable, Hashable {
         height: Int?,
         orientation: ClipOrientation?,
         contentHash: String?,
+        capturedAt: Date? = nil,
+        folderId: UUID? = nil,
+        thumbKey: String? = nil,
         status: ClipStatus,
         createdAt: Date,
         updatedAt: Date
@@ -61,6 +73,9 @@ public struct Clip: Codable, Identifiable, Sendable, Hashable {
         self.height = height
         self.orientation = orientation
         self.contentHash = contentHash
+        self.capturedAt = capturedAt
+        self.folderId = folderId
+        self.thumbKey = thumbKey
         self.status = status
         self.createdAt = createdAt
         self.updatedAt = updatedAt
