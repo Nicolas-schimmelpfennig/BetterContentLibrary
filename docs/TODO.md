@@ -9,9 +9,11 @@ Living checklist of where we are. See [ARCHITECTURE.md](ARCHITECTURE.md) for the
 ## Phase 0 — Scaffolding & infrastructure
 
 ### Project structure
-- [ ] Restructure into a shared local Swift package `BetterContentCore`
-- [ ] Add iOS app target alongside the existing macOS target
-- [ ] Add `supabase-swift` dependency
+- [x] Shared local Swift package `BetterContentCore` (models, Supabase client, AuthService); builds clean
+- [x] `supabase-swift` dependency wired into the macOS app target
+- [x] macOS app: email/password sign-in + sign-up UI, authenticated landing, sandbox entitlements (network client + user-selected files)
+- [x] First commit pushed to GitHub (Nicolas-schimmelpfennig/BetterContentLibrary, main)
+- [ ] Add iOS app target alongside the existing macOS target (deferred to start of Phase 3)
 
 ### Supabase (project ref: srltmrcwpdtjiiflwwkb — connected via MCP)
 - [x] Create Supabase project (Nicolas)
