@@ -1,0 +1,28 @@
+# macOS
+.DS_Store
+
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+*.xcscmblueprint
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Xcode per-user data
+xcuserdata/
+**/xcuserdata/
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved.user
+
+# Secrets — never commit service keys, R2 secrets, or APNs .p8
+*.p8
+.env
+.env.*
+secrets/

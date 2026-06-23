@@ -6,12 +6,17 @@
 //
 
 import SwiftUI
+import BetterContentCore
 
 @main
 struct BetterContentLibraryApp: App {
+    @State private var auth = AuthService()
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            RootView()
+                .environment(auth)
+                .task { await auth.start() }
         }
     }
 }
