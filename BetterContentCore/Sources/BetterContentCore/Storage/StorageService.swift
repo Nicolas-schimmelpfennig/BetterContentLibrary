@@ -90,6 +90,16 @@ public final class StorageService: Sendable {
         try await requestDownloadTicket(clipId: clipId).downloadUrl
     }
 
+    /// Deletes a clip's R2 objects (the video and its thumbnail). The Edge
+    /// Function performs the deletes server-side using the clip's `r2_key`, so
+    /// this must be called *before* the clip row is removed from the database.
+    public func deleteObjects(clipId: UUID) async throws {
+        let _: DeleteResponse = try await client.functions.invoke(
+            "r2-sign",
+            options: FunctionInvokeOptions(body: DeleteRequest(clipId: clipId.uuidString))
+        )
+    }
+
     // MARK: Direct transfer to/from R2
 
     /// Uploads a local file to R2 using a presigned ticket. The presign signs
@@ -157,5 +167,14 @@ public final class StorageService: Sendable {
         let action = "download"
         let kind = "thumb"
         let clipId: String
+    }
+
+    private struct DeleteRequest: Encodable {
+        let action = "delete"
+        let clipId: String
+    }
+
+    private struct DeleteResponse: Decodable {
+        let ok: Bool
     }
 }

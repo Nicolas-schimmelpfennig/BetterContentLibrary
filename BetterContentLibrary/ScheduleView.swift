@@ -172,6 +172,7 @@ private struct AddScheduleSheet: View {
     @State private var platform: Platform = .instagram
     @State private var time: Date
     @State private var notes = ""
+    @State private var notifyProfileId: UUID?
 
     init(day: Date, model: ScheduleModel) {
         self.day = day
@@ -182,6 +183,7 @@ private struct AddScheduleSheet: View {
         comps.minute = 0
         _time = State(initialValue: Calendar.current.date(from: comps) ?? day)
         _clipId = State(initialValue: model.schedulableClips.first?.id)
+        _notifyProfileId = State(initialValue: model.currentProfileId)
     }
 
     var body: some View {
@@ -212,6 +214,12 @@ private struct AddScheduleSheet: View {
                             Text(PlatformStyle.name(p)).tag(p)
                         }
                     }
+                    Picker("Notify", selection: $notifyProfileId) {
+                        Text("No one").tag(UUID?.none)
+                        ForEach(model.orgMembers) { member in
+                            Text(member.displayName ?? "Member").tag(Optional(member.id))
+                        }
+                    }
                     DatePicker("Time", selection: $time, displayedComponents: [.hourAndMinute])
                     TextField("Notes (optional)", text: $notes, axis: .vertical)
                 }
@@ -226,7 +234,7 @@ private struct AddScheduleSheet: View {
                 Button("Schedule") {
                     if let clipId {
                         let when = combine(day: day, time: time)
-                        Task { await model.add(clipId: clipId, platform: platform, at: when, notes: notes.isEmpty ? nil : notes) }
+                        Task { await model.add(clipId: clipId, platform: platform, at: when, notes: notes.isEmpty ? nil : notes, notifyProfileId: notifyProfileId) }
                     }
                     dismiss()
                 }

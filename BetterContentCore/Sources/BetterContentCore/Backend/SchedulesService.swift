@@ -29,7 +29,8 @@ public final class SchedulesService: Sendable {
         platform: Platform,
         scheduledAt: Date,
         timezone: String = TimeZone.current.identifier,
-        notes: String? = nil
+        notes: String? = nil,
+        notifyProfileId: UUID? = nil
     ) async throws -> Schedule {
         let row = InsertSchedule(
             org_id: orgId.uuidString,
@@ -37,7 +38,8 @@ public final class SchedulesService: Sendable {
             platform: platform.rawValue,
             scheduled_at: scheduledAt,
             timezone: timezone,
-            notes: notes
+            notes: notes,
+            notify_profile_id: notifyProfileId?.uuidString
         )
         return try await client
             .from("schedules")
@@ -80,6 +82,7 @@ public final class SchedulesService: Sendable {
         let scheduled_at: Date
         let timezone: String
         let notes: String?
+        let notify_profile_id: String?
     }
 
     private struct TimePatch: Encodable, Sendable {

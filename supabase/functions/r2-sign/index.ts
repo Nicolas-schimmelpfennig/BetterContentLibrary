@@ -7,10 +7,12 @@
 //   { "action": "upload",   "kind": "thumb", "clipId": "<uuid>" }
 //   { "action": "download", "clipId": "<uuid>" }
 //   { "action": "download", "kind": "thumb", "clipId": "<uuid>" }
+//   { "action": "delete",   "clipId": "<uuid>" }
 //
 // Response:
 //   upload   -> { "uploadUrl": "...", "key": "orgs/<org>/clips/<uuid>.mp4" }
 //   download -> { "downloadUrl": "...", "key": "..." }
+//   delete   -> { "ok": true }
 // Thumbnails live at a deterministic key: orgs/<org>/thumbs/<clipId>.jpg
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -125,6 +127,30 @@ Deno.serve(async (req) => {
     if (clipErr || !clip?.r2_key) return json({ error: "Clip not found" }, 404);
     const downloadUrl = await presign(clip.r2_key as string, "GET");
     return json({ downloadUrl, key: clip.r2_key });
+  }
+
+  if (action === "delete") {
+    const clipId = payload.clipId;
+    if (typeof clipId !== "string") return json({ error: "clipId required" }, 400);
+
+    // RLS confirms the clip belongs to the caller's org. The thumbnail key is
+    // deterministic; the video key comes from the row. We delete the objects
+    // server-side (the worker holds the R2 secret); the caller removes the row.
+    const { data: clip } = await supabase
+      .from("clips")
+      .select("r2_key")
+      .eq("id", clipId)
+      .single();
+
+    const keys = [thumbKey(clipId)];
+    if (clip?.r2_key) keys.push(clip.r2_key as string);
+
+    // Best-effort: a missing object (404) is fine — the goal is that it's gone.
+    await Promise.all(keys.map(async (key) => {
+      const url = `${R2_ENDPOINT}/${R2_BUCKET}/${key}`;
+      try { await aws.fetch(url, { method: "DELETE" }); } catch { /* ignore */ }
+    }));
+    return json({ ok: true });
   }
 
   return json({ error: "Unknown action" }, 400);

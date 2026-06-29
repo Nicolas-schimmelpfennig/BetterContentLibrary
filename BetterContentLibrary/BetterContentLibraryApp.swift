@@ -18,5 +18,9 @@ struct BetterContentLibraryApp: App {
                 .environment(auth)
                 .task { await auth.start() }
         }
+
+        Settings {
+            SettingsView()
+        }
     }
 }

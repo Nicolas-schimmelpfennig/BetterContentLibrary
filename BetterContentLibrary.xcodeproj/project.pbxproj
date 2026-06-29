@@ -8,16 +8,23 @@
 
 /* Begin PBXBuildFile section */
 		AA0000000000000000000003 /* BetterContentCore in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000002 /* BetterContentCore */; };
+		D000000000000000000000B1 /* BetterContentCore in Frameworks */ = {isa = PBXBuildFile; productRef = D000000000000000000000B2 /* BetterContentCore */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		372185612FEAA3CF008CF54E /* BetterContentLibrary.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BetterContentLibrary.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		D000000000000000000000B3 /* BetterContentLibrary-iOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "BetterContentLibrary-iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		372185632FEAA3CF008CF54E /* BetterContentLibrary */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = BetterContentLibrary;
+			sourceTree = "<group>";
+		};
+		D000000000000000000000B4 /* BetterContentLibraryiOS */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = BetterContentLibraryiOS;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -31,6 +38,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		D000000000000000000000B6 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D000000000000000000000B1 /* BetterContentCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -38,6 +53,7 @@
 			isa = PBXGroup;
 			children = (
 				372185632FEAA3CF008CF54E /* BetterContentLibrary */,
+				D000000000000000000000B4 /* BetterContentLibraryiOS */,
 				372185622FEAA3CF008CF54E /* Products */,
 			);
 			sourceTree = "<group>";
@@ -46,6 +62,7 @@
 			isa = PBXGroup;
 			children = (
 				372185612FEAA3CF008CF54E /* BetterContentLibrary.app */,
+				D000000000000000000000B3 /* BetterContentLibrary-iOS.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -76,6 +93,29 @@
 			productReference = 372185612FEAA3CF008CF54E /* BetterContentLibrary.app */;
 			productType = "com.apple.product-type.application";
 		};
+		D000000000000000000000B8 /* BetterContentLibrary-iOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D000000000000000000000B9 /* Build configuration list for PBXNativeTarget "BetterContentLibrary-iOS" */;
+			buildPhases = (
+				D000000000000000000000B5 /* Sources */,
+				D000000000000000000000B6 /* Frameworks */,
+				D000000000000000000000B7 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				D000000000000000000000B4 /* BetterContentLibraryiOS */,
+			);
+			name = "BetterContentLibrary-iOS";
+			packageProductDependencies = (
+				D000000000000000000000B2 /* BetterContentCore */,
+			);
+			productName = "BetterContentLibrary-iOS";
+			productReference = D000000000000000000000B3 /* BetterContentLibrary-iOS.app */;
+			productType = "com.apple.product-type.application";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -87,6 +127,9 @@
 				LastUpgradeCheck = 2650;
 				TargetAttributes = {
 					372185602FEAA3CF008CF54E = {
+						CreatedOnToolsVersion = 26.5;
+					};
+					D000000000000000000000B8 = {
 						CreatedOnToolsVersion = 26.5;
 					};
 				};
@@ -109,6 +152,7 @@
 			projectRoot = "";
 			targets = (
 				372185602FEAA3CF008CF54E /* BetterContentLibrary */,
+				D000000000000000000000B8 /* BetterContentLibrary-iOS */,
 			);
 		};
 /* End PBXProject section */
@@ -121,10 +165,24 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		D000000000000000000000B7 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		3721855D2FEAA3CF008CF54E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D000000000000000000000B5 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -320,6 +378,75 @@
 			};
 			name = Release;
 		};
+		D000000000000000000000BA /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = BetterContentLibraryiOS/BetterContentLibraryiOS.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 226AMQMFG9;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = BetterContentLibrary;
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Save downloaded videos to your photo library.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = Nicolas.BetterContentLibrary;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		D000000000000000000000BB /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = BetterContentLibraryiOS/BetterContentLibraryiOS.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 226AMQMFG9;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = BetterContentLibrary;
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Save downloaded videos to your photo library.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = Nicolas.BetterContentLibrary;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -341,6 +468,15 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		D000000000000000000000B9 /* Build configuration list for PBXNativeTarget "BetterContentLibrary-iOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D000000000000000000000BA /* Debug */,
+				D000000000000000000000BB /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
@@ -352,6 +488,10 @@
 
 /* Begin XCSwiftPackageProductDependency section */
 		AA0000000000000000000002 /* BetterContentCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = BetterContentCore;
+		};
+		D000000000000000000000B2 /* BetterContentCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = BetterContentCore;
 		};

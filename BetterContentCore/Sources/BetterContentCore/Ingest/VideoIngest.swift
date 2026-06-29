@@ -66,22 +66,52 @@ public enum VideoIngest {
         return nil
     }
 
-    /// Renders a JPEG thumbnail near the given timestamp, bounded to `maxPixel`
-    /// on its longest edge. Not yet uploaded anywhere — callers decide what to do
-    /// with it (the `clips` schema has no thumbnail column yet).
+    /// Renders a JPEG poster thumbnail, bounded to `maxPixel` on its longest edge.
+    ///
+    /// Seeks ~10% into the clip (clamped to at least 0.5s, at most just before the
+    /// end) rather than to the very first frame, which is typically a black/blank
+    /// lead-in. Pass `duration` (from ``metadata(of:)``) to avoid re-loading it.
+    ///
+    /// Time tolerance is pinned to zero so the *exact* requested frame is decoded.
+    /// Left at the default (`kCMTimePositiveInfinity`), `AVAssetImageGenerator`
+    /// returns the nearest keyframe, which — depending on each video's keyframe
+    /// spacing — lands anywhere from frame 0 to well past the seek point, making
+    /// posters inconsistent across clips (the hover-skim generator pins tolerance
+    /// for the same reason).
     public static func thumbnailJPEG(
         of url: URL,
-        atSeconds seconds: Double = 0,
-        maxPixel: CGFloat = 600,
-        quality: CGFloat = 0.7
+        duration: Double? = nil,
+        maxPixel: CGFloat = 640,
+        quality: CGFloat = 0.8
     ) async throws -> Data {
         let asset = AVURLAsset(url: url)
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
         generator.maximumSize = CGSize(width: maxPixel, height: maxPixel)
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
 
+        let total: Double
+        if let duration {
+            total = duration
+        } else {
+            total = try await CMTimeGetSeconds(asset.load(.duration))
+        }
+        let seconds = min(max(total * 0.1, 0.5), max(total - 0.1, 0))
         let time = CMTime(seconds: seconds, preferredTimescale: 600)
-        let cgImage = try await generator.image(at: time).image
+
+        // Decode the exact frame for poster consistency. Some encodings (sparse
+        // keyframes, odd containers) can't satisfy a zero-tolerance request and
+        // throw; rather than yield no poster at all, retry once allowing the
+        // generator to snap to a nearby frame.
+        let cgImage: CGImage
+        do {
+            cgImage = try await generator.image(at: time).image
+        } catch {
+            generator.requestedTimeToleranceBefore = .positiveInfinity
+            generator.requestedTimeToleranceAfter = .positiveInfinity
+            cgImage = try await generator.image(at: time).image
+        }
 
         guard let data = jpegData(from: cgImage, quality: quality) else {
             throw VideoIngestError.thumbnailEncodingFailed

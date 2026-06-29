@@ -82,7 +82,7 @@ public final class ClipUploader: Sendable {
         let hash = try await Task.detached { try ContentHasher.sha256(of: fileURL) }.value
         let metadata = try await VideoIngest.metadata(of: fileURL)
         let captured = await VideoIngest.capturedDate(of: fileURL) ?? fileCreationDate(fileURL)
-        let thumbnail = try? await VideoIngest.thumbnailJPEG(of: fileURL)
+        let thumbnail = try? await VideoIngest.thumbnailJPEG(of: fileURL, duration: metadata.durationS)
         let fileSize = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init)
 
         return ClipDraft(

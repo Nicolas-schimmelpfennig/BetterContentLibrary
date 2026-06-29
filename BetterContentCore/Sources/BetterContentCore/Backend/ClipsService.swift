@@ -73,9 +73,25 @@ public final class ClipsService: Sendable {
         try await patch(id, ThumbPatch(thumb_key: key))
     }
 
+    /// Renames a clip.
+    public func setTitle(_ id: UUID, _ title: String) async throws {
+        try await patch(id, TitlePatch(title: title))
+    }
+
     /// Moves a clip into a folder (nil = library root).
     public func setFolder(_ id: UUID, folderId: UUID?) async throws {
         try await patch(id, FolderPatch(folder_id: folderId?.uuidString))
+    }
+
+    /// Removes a clip row. The caller is responsible for deleting the clip's R2
+    /// objects (video + thumbnail) first, since this drops the `r2_key` needed to
+    /// locate them.
+    public func delete(_ id: UUID) async throws {
+        try await client
+            .from("clips")
+            .delete()
+            .eq("id", value: id.uuidString)
+            .execute()
     }
 
     /// Lists clips in a folder (nil = library root), newest first.
@@ -153,6 +169,10 @@ public final class ClipsService: Sendable {
 
     private struct ThumbPatch: Encodable, Sendable {
         let thumb_key: String
+    }
+
+    private struct TitlePatch: Encodable, Sendable {
+        let title: String
     }
 
     private struct FolderPatch: Encodable, Sendable {

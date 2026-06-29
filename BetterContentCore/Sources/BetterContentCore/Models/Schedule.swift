@@ -12,6 +12,8 @@ public struct Schedule: Codable, Identifiable, Sendable, Hashable {
     public var postedAt: Date?
     public var notes: String?
     public var notifiedAt: Date?
+    /// The org member to push a "time to post" notification to (nil = no one).
+    public var notifyProfileId: UUID?
     public let createdAt: Date
 
     enum CodingKeys: String, CodingKey {
@@ -25,6 +27,7 @@ public struct Schedule: Codable, Identifiable, Sendable, Hashable {
         case postedAt = "posted_at"
         case notes
         case notifiedAt = "notified_at"
+        case notifyProfileId = "notify_profile_id"
         case createdAt = "created_at"
     }
 
@@ -39,6 +42,7 @@ public struct Schedule: Codable, Identifiable, Sendable, Hashable {
         postedAt: Date?,
         notes: String?,
         notifiedAt: Date?,
+        notifyProfileId: UUID? = nil,
         createdAt: Date
     ) {
         self.id = id
@@ -51,6 +55,7 @@ public struct Schedule: Codable, Identifiable, Sendable, Hashable {
         self.postedAt = postedAt
         self.notes = notes
         self.notifiedAt = notifiedAt
+        self.notifyProfileId = notifyProfileId
         self.createdAt = createdAt
     }
 }
