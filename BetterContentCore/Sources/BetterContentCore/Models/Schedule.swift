@@ -10,6 +10,9 @@ public struct Schedule: Codable, Identifiable, Sendable, Hashable {
     public var timezone: String
     public var status: ScheduleStatus
     public var postedAt: Date?
+    /// The post text itself — written at scheduling time, copied at post time.
+    public var caption: String?
+    /// Internal reminders; never pasted into a post (unlike `caption`).
     public var notes: String?
     public var notifiedAt: Date?
     /// The org member to push a "time to post" notification to (nil = no one).
@@ -25,6 +28,7 @@ public struct Schedule: Codable, Identifiable, Sendable, Hashable {
         case timezone
         case status
         case postedAt = "posted_at"
+        case caption
         case notes
         case notifiedAt = "notified_at"
         case notifyProfileId = "notify_profile_id"
@@ -40,6 +44,7 @@ public struct Schedule: Codable, Identifiable, Sendable, Hashable {
         timezone: String,
         status: ScheduleStatus,
         postedAt: Date?,
+        caption: String? = nil,
         notes: String?,
         notifiedAt: Date?,
         notifyProfileId: UUID? = nil,
@@ -53,6 +58,7 @@ public struct Schedule: Codable, Identifiable, Sendable, Hashable {
         self.timezone = timezone
         self.status = status
         self.postedAt = postedAt
+        self.caption = caption
         self.notes = notes
         self.notifiedAt = notifiedAt
         self.notifyProfileId = notifyProfileId

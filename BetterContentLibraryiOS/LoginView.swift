@@ -2,12 +2,14 @@
 //  LoginView.swift
 //  BetterContentLibrary (iOS)
 //
+//  Same brand block as the macOS login (design 1k); 44pt fields and buttons.
+//  Email/password sign-in and sign-up; sign-up metadata drives the backend
+//  org + owner-profile trigger.
+//
 
 import SwiftUI
 import BetterContentCore
 
-/// Email/password sign-in and sign-up. On sign-up the display name and org name
-/// ride along as metadata so the backend trigger creates the org + owner profile.
 struct LoginView: View {
     @Environment(AuthService.self) private var auth
 
@@ -21,61 +23,97 @@ struct LoginView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 20) {
-                Image(systemName: "film.stack")
-                    .font(.system(size: 48))
-                    .foregroundStyle(.tint)
-                    .padding(.top, 60)
+            VStack(spacing: 0) {
+                BrandMark(size: 66)
+                    .padding(.top, 90)
 
-                Text(isSignUp ? "Create your account" : "Sign in")
-                    .font(.largeTitle.bold())
+                Text("BetterContentLibrary")
+                    .font(.system(size: 19, weight: .bold))
+                    .foregroundStyle(BCLTheme.textPrimary)
+                    .padding(.top, 16)
+                Text("From final cut to posted.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(BCLTheme.textSecondary)
+                    .padding(.top, 4)
 
-                VStack(spacing: 12) {
-                    TextField("Email", text: $email)
+                VStack(spacing: 10) {
+                    field("Email", text: $email)
                         .textContentType(.emailAddress)
                         .keyboardType(.emailAddress)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                    SecureField("Password", text: $password)
-                        .textContentType(isSignUp ? .newPassword : .password)
+                    secureField("Password", text: $password)
 
                     if isSignUp {
-                        TextField("Your name", text: $displayName)
+                        field("Your name", text: $displayName)
                             .textContentType(.name)
-                        TextField("Organization name", text: $orgName)
+                        field("Organization name", text: $orgName)
                     }
-                }
-                .textFieldStyle(.roundedBorder)
 
-                if let errorMessage {
-                    Text(errorMessage)
-                        .foregroundStyle(.red)
-                        .font(.callout)
-                        .multilineTextAlignment(.center)
-                }
-
-                Button(action: submit) {
-                    if isWorking {
-                        ProgressView().frame(maxWidth: .infinity)
-                    } else {
-                        Text(isSignUp ? "Sign up" : "Sign in").frame(maxWidth: .infinity)
+                    if let errorMessage {
+                        Text(errorMessage)
+                            .font(.system(size: 12))
+                            .foregroundStyle(BCLTheme.errorText)
+                            .multilineTextAlignment(.center)
                     }
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .disabled(isWorking || email.isEmpty || password.isEmpty)
 
-                Button(isSignUp ? "Already have an account? Sign in"
-                                : "No account? Create one") {
-                    withAnimation { isSignUp.toggle() }
-                    errorMessage = nil
+                    Button(action: submit) {
+                        Group {
+                            if isWorking {
+                                ProgressView().tint(.white)
+                            } else {
+                                Text(isSignUp ? "Create Account" : "Sign In")
+                                    .font(.system(size: 14.5, weight: .semibold))
+                            }
+                        }
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 46)
+                        .background(BCLTheme.accent, in: RoundedRectangle(cornerRadius: 11))
+                    }
+                    .disabled(isWorking || email.isEmpty || password.isEmpty)
+                    .opacity(email.isEmpty || password.isEmpty ? 0.5 : 1)
+                    .padding(.top, 6)
+
+                    Button(isSignUp ? "Already have an account? Sign in"
+                                    : "No account? Create one") {
+                        withAnimation { isSignUp.toggle() }
+                        errorMessage = nil
+                    }
+                    .font(.system(size: 12))
+                    .foregroundStyle(BCLTheme.textLabel)
+                    .padding(.top, 4)
                 }
-                .font(.callout)
+                .padding(.top, 26)
+                .disabled(isWorking)
             }
-            .padding(24)
+            .padding(.horizontal, 28)
             .frame(maxWidth: 480)
             .frame(maxWidth: .infinity)
         }
+        .background(BCLTheme.well)
+        .scrollBounceBehavior(.basedOnSize)
+    }
+
+    private func field(_ placeholder: String, text: Binding<String>) -> some View {
+        TextField(placeholder, text: text)
+            .font(.system(size: 14))
+            .foregroundStyle(BCLTheme.textPrimary)
+            .padding(.horizontal, 14)
+            .frame(height: 44)
+            .background(BCLTheme.content, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.white.opacity(0.1), lineWidth: 1))
+    }
+
+    private func secureField(_ placeholder: String, text: Binding<String>) -> some View {
+        SecureField(placeholder, text: text)
+            .textContentType(isSignUp ? .newPassword : .password)
+            .font(.system(size: 14))
+            .foregroundStyle(BCLTheme.textPrimary)
+            .padding(.horizontal, 14)
+            .frame(height: 44)
+            .background(BCLTheme.content, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.white.opacity(0.1), lineWidth: 1))
     }
 
     private func submit() {

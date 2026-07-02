@@ -29,6 +29,7 @@ public final class SchedulesService: Sendable {
         platform: Platform,
         scheduledAt: Date,
         timezone: String = TimeZone.current.identifier,
+        caption: String? = nil,
         notes: String? = nil,
         notifyProfileId: UUID? = nil
     ) async throws -> Schedule {
@@ -38,6 +39,7 @@ public final class SchedulesService: Sendable {
             platform: platform.rawValue,
             scheduled_at: scheduledAt,
             timezone: timezone,
+            caption: caption,
             notes: notes,
             notify_profile_id: notifyProfileId?.uuidString
         )
@@ -48,6 +50,27 @@ public final class SchedulesService: Sendable {
             .single()
             .execute()
             .value
+    }
+
+    /// All of the org's schedules (RLS-scoped), for deriving per-clip display
+    /// status in the library. Soonest first, capped generously.
+    public func listAll(limit: Int = 1000) async throws -> [Schedule] {
+        try await client
+            .from("schedules")
+            .select()
+            .order("scheduled_at", ascending: true)
+            .limit(limit)
+            .execute()
+            .value
+    }
+
+    /// Marks a schedule posted, recording when.
+    public func markPosted(_ id: UUID, at date: Date = Date()) async throws {
+        try await client
+            .from("schedules")
+            .update(PostedPatch(status: ScheduleStatus.posted.rawValue, posted_at: date))
+            .eq("id", value: id.uuidString)
+            .execute()
     }
 
     /// Moves a schedule to a new time.
@@ -81,8 +104,14 @@ public final class SchedulesService: Sendable {
         let platform: String
         let scheduled_at: Date
         let timezone: String
+        let caption: String?
         let notes: String?
         let notify_profile_id: String?
+    }
+
+    private struct PostedPatch: Encodable, Sendable {
+        let status: String
+        let posted_at: Date
     }
 
     private struct TimePatch: Encodable, Sendable {

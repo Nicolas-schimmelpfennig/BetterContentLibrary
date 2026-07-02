@@ -2,8 +2,10 @@
 //  ScheduleScreen.swift
 //  BetterContentLibrary (iOS)
 //
-//  Month calendar for assigning clips to post date/times. Tap a day to add; drag
-//  a chip to another day to reschedule; long-press a chip to delete.
+//  Month calendar (design 1o): an "Up next" card answers "what do I post
+//  next?" before any tapping; day cells carry status dots; the selected day's
+//  agenda stays pinned below the grid. Tapping an agenda row (or the up-next
+//  card) opens Day detail.
 //
 
 import SwiftUI
@@ -12,7 +14,9 @@ import BetterContentCore
 struct ScheduleScreen: View {
     let model: AppModel
 
-    @State private var selectedDay: DaySelection?
+    @State private var selectedDay = Date()
+    @State private var detailDay: DaySelection?
+    @State private var addDay: DaySelection?
     @State private var deepLink = DeepLinkCenter.shared
 
     private var schedule: ScheduleModel { model.schedule }
@@ -20,23 +24,25 @@ struct ScheduleScreen: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                weekdayHeader
-                ScrollView {
-                    LazyVGrid(columns: columns, spacing: 2) {
-                        ForEach(schedule.gridDays, id: \.self) { day in
-                            DayCell(day: day, schedule: schedule, onSelect: { selectedDay = DaySelection(date: day) })
-                        }
-                    }
-                    .padding(2)
+            ScrollView {
+                VStack(spacing: 12) {
+                    upNextCard
+                    calendar
+                    agenda
                 }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
             }
+            .background(BCLTheme.well)
             .navigationTitle(schedule.monthTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button { schedule.step(months: -1) } label: { Image(systemName: "chevron.left") }
-                    Button("Today") { schedule.goToToday() }
+                    Button("Today") {
+                        schedule.goToToday()
+                        selectedDay = Date()
+                    }
                     Button { schedule.step(months: 1) } label: { Image(systemName: "chevron.right") }
                 }
             }
@@ -45,69 +51,158 @@ struct ScheduleScreen: View {
             // (covers both cold launch and while running).
             .task(id: deepLink.scheduleDay) {
                 if let day = deepLink.scheduleDay {
-                    selectedDay = DaySelection(date: day)
+                    selectedDay = day
+                    detailDay = DaySelection(date: day)
                     deepLink.scheduleDay = nil
                 }
             }
-            .sheet(item: $selectedDay) { selection in
+            .sheet(item: $detailDay) { selection in
                 DayDetailSheet(day: selection.date, model: model)
             }
-        }
-    }
-
-    private var weekdayHeader: some View {
-        HStack(spacing: 2) {
-            ForEach(schedule.weekdaySymbols, id: \.self) { symbol in
-                Text(symbol.uppercased())
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity)
+            .sheet(item: $addDay) { selection in
+                AddScheduleSheet(day: selection.date, model: schedule)
             }
         }
-        .padding(.horizontal, 4)
-        .padding(.vertical, 6)
     }
 
     struct DaySelection: Identifiable {
         let id = UUID()
         let date: Date
     }
-}
 
-private struct DayCell: View {
-    let day: Date
-    let schedule: ScheduleModel
-    let onSelect: () -> Void
+    // MARK: Up next (due within 24 h)
 
-    private var dayNumber: String { day.formatted(.dateTime.day()) }
-    private var inMonth: Bool { schedule.isInCurrentMonth(day) }
-    private var isToday: Bool { schedule.isToday(day) }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(dayNumber)
-                .font(.caption.weight(isToday ? .bold : .regular))
-                .foregroundStyle(numberColor)
-                .frame(width: 22, height: 22)
-                .background { if isToday { Circle().fill(Color.accentColor) } }
-
-            ForEach(schedule.schedules(on: day)) { sched in
-                ScheduleChip(schedule: sched, title: schedule.clip(for: sched)?.title ?? "Clip")
-                    .draggable(sched.id.uuidString)
-                    .contextMenu {
-                        Button("Delete", role: .destructive) {
-                            Task { await schedule.delete(sched.id) }
+    @ViewBuilder
+    private var upNextCard: some View {
+        if let next = schedule.upNext {
+            Button {
+                detailDay = DaySelection(date: next.scheduledAt)
+            } label: {
+                HStack(spacing: 10) {
+                    thumbWell(for: schedule.clip(for: next))
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("UP NEXT · \(relative(next.scheduledAt))")
+                            .font(.system(size: 10, weight: .bold))
+                            .kerning(0.6)
+                            .foregroundStyle(BCLTheme.accentText)
+                        Text(schedule.clip(for: next)?.title ?? "Clip")
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundStyle(BCLTheme.textPrimary)
+                            .lineLimit(1)
+                        HStack(spacing: 5) {
+                            PlatformBadge(next.platform, size: 13)
+                            Text(next.scheduledAt.formatted(.dateTime.hour().minute()))
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundStyle(BCLTheme.textPrimary.opacity(0.6))
                         }
                     }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(BCLTheme.accentText)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(
+                    LinearGradient(
+                        colors: [BCLTheme.accent.opacity(0.16), BCLTheme.accent.opacity(0.06)],
+                        startPoint: .topLeading, endPoint: .bottomTrailing
+                    ),
+                    in: RoundedRectangle(cornerRadius: BCLTheme.radiusSheet)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: BCLTheme.radiusSheet)
+                        .strokeBorder(BCLTheme.accent.opacity(0.35), lineWidth: 1)
+                )
             }
-
-            Spacer(minLength: 0)
+            .buttonStyle(.plain)
         }
-        .frame(maxWidth: .infinity, minHeight: 92, alignment: .topLeading)
-        .padding(3)
-        .background(inMonth ? Color(.secondarySystemGroupedBackground) : Color(.systemGroupedBackground))
-        .contentShape(Rectangle())
-        .onTapGesture { onSelect() }
+    }
+
+    private func thumbWell(for clip: Clip?) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 5).fill(.black)
+            if let clip {
+                ClipThumbnailView(clip: clip, loader: model.thumbnails, skim: model.skim, skimEnabled: false)
+                    .padding(2)
+            }
+        }
+        .frame(width: 30, height: 46)
+    }
+
+    private func relative(_ date: Date) -> String {
+        let minutes = Int(date.timeIntervalSinceNow / 60)
+        if minutes <= 0 { return "NOW" }
+        if minutes < 60 { return "IN \(minutes) MIN" }
+        return "IN \(minutes / 60) H \(minutes % 60) MIN"
+    }
+
+    // MARK: Calendar (dot cells)
+
+    private var calendar: some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 2) {
+                ForEach(schedule.weekdaySymbols, id: \.self) { symbol in
+                    Text(String(symbol.prefix(1)).uppercased())
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(BCLTheme.textPrimary.opacity(0.35))
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            LazyVGrid(columns: columns, spacing: 2) {
+                ForEach(schedule.gridDays, id: \.self) { day in
+                    dayCell(day)
+                }
+            }
+        }
+        .padding(10)
+        .background(BCLTheme.content, in: RoundedRectangle(cornerRadius: BCLTheme.radiusSheet))
+        .overlay(RoundedRectangle(cornerRadius: BCLTheme.radiusSheet).strokeBorder(BCLTheme.hairline, lineWidth: 1))
+    }
+
+    private func dayCell(_ day: Date) -> some View {
+        let cal = Calendar.current
+        let inMonth = schedule.isInCurrentMonth(day)
+        let isToday = schedule.isToday(day)
+        let isSelected = cal.isDate(day, inSameDayAs: selectedDay)
+        let daySchedules = schedule.schedules(on: day)
+
+        return Button {
+            selectedDay = day
+        } label: {
+            VStack(spacing: 2) {
+                Text(day.formatted(.dateTime.day()))
+                    .font(.system(size: 12, weight: isToday ? .bold : .medium))
+                    .foregroundStyle(
+                        isToday ? .white
+                        : isSelected ? BCLTheme.accentText
+                        : inMonth ? BCLTheme.textPrimary.opacity(0.75)
+                        : BCLTheme.textPrimary.opacity(0.25)
+                    )
+                    .frame(width: 24, height: 24)
+                    .background {
+                        if isToday {
+                            Circle().fill(BCLTheme.accent)
+                        } else if isSelected {
+                            Circle()
+                                .fill(BCLTheme.accent.opacity(0.2))
+                                .overlay(Circle().strokeBorder(BCLTheme.accent, lineWidth: 1.5))
+                        }
+                    }
+                HStack(spacing: 2) {
+                    ForEach(Array(daySchedules.prefix(3).enumerated()), id: \.offset) { _, sched in
+                        Circle()
+                            .fill(sched.status.color)
+                            .frame(width: 4, height: 4)
+                    }
+                }
+                .frame(height: 4)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 38)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
         .dropDestination(for: String.self) { ids, _ in
             for id in ids where UUID(uuidString: id) != nil {
                 Task { await schedule.reschedule(id: UUID(uuidString: id)!, toDay: day) }
@@ -116,28 +211,93 @@ private struct DayCell: View {
         }
     }
 
-    private var numberColor: Color {
-        if isToday { return .white }
-        return inMonth ? .primary : .secondary
-    }
-}
+    // MARK: Pinned agenda for the selected day
 
-private struct ScheduleChip: View {
-    let schedule: Schedule
-    let title: String
+    private var agenda: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(selectedDay.formatted(.dateTime.weekday(.wide).month().day()))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(BCLTheme.textPrimary)
+                Spacer()
+                Button {
+                    addDay = DaySelection(date: selectedDay)
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(BCLTheme.textSecondary)
+                        .frame(width: 26, height: 26)
+                        .background(BCLTheme.content, in: Circle())
+                        .overlay(Circle().strokeBorder(BCLTheme.hairline, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+            }
 
-    var body: some View {
-        HStack(spacing: 3) {
-            Circle().fill(PlatformStyle.color(schedule.platform)).frame(width: 6, height: 6)
-            Text(title)
-                .font(.system(size: 10))
-                .lineLimit(1)
+            let daySchedules = schedule.schedules(on: selectedDay)
+            if daySchedules.isEmpty {
+                Text("Nothing scheduled")
+                    .font(.system(size: 12))
+                    .foregroundStyle(BCLTheme.textTertiary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 18)
+            } else {
+                VStack(spacing: 6) {
+                    ForEach(daySchedules) { sched in
+                        Button {
+                            detailDay = DaySelection(date: selectedDay)
+                        } label: {
+                            agendaRow(sched)
+                        }
+                        .buttonStyle(.plain)
+                        .draggable(sched.id.uuidString)
+                        .contextMenu {
+                            if sched.status == .planned {
+                                Button("Mark as Posted") { Task { await schedule.markPosted(sched.id) } }
+                                Button("Skip") { Task { await schedule.skip(sched.id) } }
+                                Divider()
+                            }
+                            Button("Delete", role: .destructive) {
+                                Task { await schedule.delete(sched.id) }
+                            }
+                        }
+                    }
+                }
+            }
         }
-        .padding(.horizontal, 4).padding(.vertical, 2)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(PlatformStyle.color(schedule.platform).opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
+        .padding(.bottom, 16)
+    }
+
+    /// Same chip anatomy as macOS: 3px status border, monogram, title, mono time.
+    private func agendaRow(_ sched: Schedule) -> some View {
+        HStack(spacing: 8) {
+            PlatformBadge(sched.platform, size: 16)
+            Text(schedule.clip(for: sched)?.title ?? "Clip")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(sched.status == .skipped ? BCLTheme.textTertiary : BCLTheme.textPrimary)
+                .strikethrough(sched.status == .skipped)
+                .lineLimit(1)
+            Spacer()
+            Text(sched.scheduledAt.formatted(.dateTime.hour().minute()))
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(BCLTheme.textLabel)
+        }
+        .padding(.leading, 10)
+        .padding(.trailing, 12)
+        .frame(height: 44)
+        .frame(maxWidth: .infinity)
+        .background(BCLTheme.content, in: RoundedRectangle(cornerRadius: BCLTheme.radiusCard))
+        .overlay(alignment: .leading) {
+            UnevenRoundedRectangle(
+                cornerRadii: .init(topLeading: BCLTheme.radiusCard, bottomLeading: BCLTheme.radiusCard)
+            )
+            .fill(sched.status.color)
+            .frame(width: 3)
+        }
+        .overlay(RoundedRectangle(cornerRadius: BCLTheme.radiusCard).strokeBorder(BCLTheme.hairline, lineWidth: 1))
     }
 }
+
+// MARK: - Add Schedule sheet (design 1s)
 
 struct AddScheduleSheet: View {
     let day: Date
@@ -147,7 +307,7 @@ struct AddScheduleSheet: View {
     @State private var clipId: UUID?
     @State private var platform: Platform = .instagram
     @State private var time: Date
-    @State private var notes = ""
+    @State private var caption = ""
     @State private var notifyProfileId: UUID?
 
     init(day: Date, model: ScheduleModel) {
@@ -161,6 +321,14 @@ struct AddScheduleSheet: View {
         _notifyProfileId = State(initialValue: model.currentProfileId)
     }
 
+    private var captionLimit: Int {
+        switch platform {
+        case .x: return 280
+        case .youtube, .youtubeShorts: return 5000
+        default: return 2200
+        }
+    }
+
     var body: some View {
         NavigationStack {
             Group {
@@ -172,24 +340,34 @@ struct AddScheduleSheet: View {
                     )
                 } else {
                     Form {
-                        Picker("Clip", selection: $clipId) {
-                            ForEach(model.schedulableClips) { clip in
-                                Text(clip.title).tag(Optional(clip.id))
+                        Section {
+                            Picker("Clip", selection: $clipId) {
+                                ForEach(model.schedulableClips) { clip in
+                                    Text(clip.title).tag(Optional(clip.id))
+                                }
                             }
                         }
-                        Picker("Platform", selection: $platform) {
-                            ForEach(Platform.allCases, id: \.self) { p in
-                                Text(PlatformStyle.name(p)).tag(p)
+                        Section("Platform") {
+                            platformChips
+                                .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
+                        }
+                        Section {
+                            DatePicker("Time", selection: $time, displayedComponents: [.hourAndMinute])
+                            Picker("Notify", selection: $notifyProfileId) {
+                                Text("No one").tag(UUID?.none)
+                                ForEach(model.orgMembers) { member in
+                                    Text(member.displayName ?? "Member").tag(Optional(member.id))
+                                }
                             }
                         }
-                        Picker("Notify", selection: $notifyProfileId) {
-                            Text("No one").tag(UUID?.none)
-                            ForEach(model.orgMembers) { member in
-                                Text(member.displayName ?? "Member").tag(Optional(member.id))
-                            }
+                        Section {
+                            TextField("Caption — the post text", text: $caption, axis: .vertical)
+                                .lineLimit(3...8)
+                        } footer: {
+                            Text("\(caption.count)/\(captionLimit) · copied at post time from Day detail")
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(caption.count > captionLimit ? BCLTheme.errorText : BCLTheme.textTertiary)
                         }
-                        DatePicker("Time", selection: $time, displayedComponents: [.hourAndMinute])
-                        TextField("Notes (optional)", text: $notes, axis: .vertical)
                     }
                 }
             }
@@ -200,15 +378,53 @@ struct AddScheduleSheet: View {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Schedule") {
+                    Button("Add") {
                         if let clipId {
                             let when = combine(day: day, time: time)
-                            Task { await model.add(clipId: clipId, platform: platform, at: when, notes: notes.isEmpty ? nil : notes, notifyProfileId: notifyProfileId) }
+                            let trimmed = caption.trimmingCharacters(in: .whitespacesAndNewlines)
+                            Task {
+                                await model.add(
+                                    clipId: clipId, platform: platform, at: when,
+                                    caption: trimmed.isEmpty ? nil : trimmed,
+                                    notes: nil, notifyProfileId: notifyProfileId
+                                )
+                            }
                         }
                         dismiss()
                     }
                     .disabled(clipId == nil)
                 }
+            }
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    /// Equal-width platform chips; selection gets the 2px brand-color border —
+    /// the one place platform color gets loud.
+    private var platformChips: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 6) {
+            ForEach(Platform.allCases, id: \.self) { p in
+                Button {
+                    platform = p
+                } label: {
+                    VStack(spacing: 4) {
+                        PlatformBadge(p, size: 18)
+                        Text(p.displayName)
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .foregroundStyle(BCLTheme.textPrimary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 48)
+                    .background(BCLTheme.content, in: RoundedRectangle(cornerRadius: BCLTheme.radiusControl))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: BCLTheme.radiusControl)
+                            .strokeBorder(platform == p ? p.brandColor : BCLTheme.hairline, lineWidth: platform == p ? 2 : 1)
+                    )
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
         }
     }
@@ -220,34 +436,5 @@ struct AddScheduleSheet: View {
         comps.hour = t.hour
         comps.minute = t.minute
         return cal.date(from: comps) ?? day
-    }
-}
-
-/// Per-platform colors and display names (iOS copy; SwiftUI `Color` keeps this in
-/// the view layer rather than the UI-free core).
-enum PlatformStyle {
-    static func color(_ platform: Platform) -> Color {
-        switch platform {
-        case .instagram: return .pink
-        case .tiktok: return .cyan
-        case .youtube, .youtubeShorts: return .red
-        case .x: return .primary
-        case .facebook: return .blue
-        case .linkedin: return .indigo
-        case .other: return .gray
-        }
-    }
-
-    static func name(_ platform: Platform) -> String {
-        switch platform {
-        case .instagram: return "Instagram"
-        case .tiktok: return "TikTok"
-        case .youtube: return "YouTube"
-        case .youtubeShorts: return "YouTube Shorts"
-        case .x: return "X"
-        case .facebook: return "Facebook"
-        case .linkedin: return "LinkedIn"
-        case .other: return "Other"
-        }
     }
 }

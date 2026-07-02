@@ -39,6 +39,8 @@ private struct BrowserKeyWiring: ViewModifier {
 
 struct LibraryView: View {
     let model: AppModel
+    /// Active Pipeline smart filter (from the sidebar); nil = folder browsing.
+    @Binding var pipelineFilter: ClipDisplayStatus?
 
     @AppStorage("libraryViewMode") private var viewMode: LibraryViewMode = .icon
     @AppStorage("librarySortKey") private var sortKeyRaw = LibrarySortKey.dateAdded.rawValue
@@ -76,11 +78,25 @@ struct LibraryView: View {
     }
 
     /// Folders first (sorted among themselves), then clips — Finder's
-    /// "keep folders on top", regardless of the chosen sort.
+    /// "keep folders on top", regardless of the chosen sort. A Pipeline smart
+    /// filter replaces the folder listing with a flat, org-wide result.
     private var items: [LibraryEntry] {
+        if let pipelineFilter {
+            return library.clips(withDisplayStatus: pipelineFilter)
+                .map(LibraryEntry.clip)
+                .sorted(using: comparators)
+        }
         let folders = library.subfolders.map(LibraryEntry.folder).sorted(using: comparators)
         let clips = library.items.map(LibraryEntry.clip).sorted(using: comparators)
         return folders + clips
+    }
+
+    private var viewTitle: String {
+        switch pipelineFilter {
+        case .ready: return "Needs scheduling"
+        case .some(let status): return status.label
+        case nil: return library.currentFolder?.name ?? "Library"
+        }
     }
 
     var body: some View {
@@ -97,10 +113,13 @@ struct LibraryView: View {
     private var shell: some View {
         VStack(spacing: 0) {
             content
-            Divider()
-            pathBar
+            if pipelineFilter == nil {
+                Divider()
+                pathBar
+            }
         }
-        .navigationTitle(library.currentFolder?.name ?? "Library")
+        .background(BCLTheme.content)
+        .navigationTitle(viewTitle)
         .navigationSubtitle(subtitle)
         .toolbar { toolbar }
         .task { await library.load() }
@@ -265,6 +284,7 @@ struct LibraryView: View {
     private func gridCell(_ item: LibraryEntry) -> some View {
         let cell = GridCell(
             item: item,
+            displayStatus: item.clip.map { library.displayStatus(for: $0) },
             isSelected: selection.contains(item.id),
             isRenaming: renamingID == item.id,
             progress: item.clip.flatMap { model.uploadProgress[$0.id] },
@@ -411,13 +431,47 @@ struct LibraryView: View {
         }
     }
 
+    /// Ghost cells echoing the three orientations (design 1f, adapted to the
+    /// drag-and-drop flow while the watched folder stays shelved).
     private var emptyState: some View {
-        ContentUnavailableView {
-            Label("Nothing here yet", systemImage: "square.grid.2x2")
-        } description: {
-            Text("Upload a video, or create a folder to organize your clips.")
-        } actions: {
-            Button("New Folder") { isCreatingFolder = true }
+        VStack(spacing: 20) {
+            HStack(spacing: 14) {
+                ghostCell(width: 44, height: 76)
+                ghostCell(width: 96, height: 58)
+                ghostCell(width: 64, height: 64)
+            }
+            VStack(spacing: 5) {
+                Text(pipelineFilter == nil ? "Nothing here yet" : "No clips in this list")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(BCLTheme.textPrimary)
+                Text(pipelineFilter == nil
+                     ? "Drop a video into Upload — it lands here ready to schedule."
+                     : "Clips appear here as their pipeline state changes.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(BCLTheme.textLabel)
+            }
+            if pipelineFilter == nil {
+                Button("New Folder") { isCreatingFolder = true }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(BCLTheme.textPrimary)
+                    .padding(.horizontal, 14)
+                    .frame(height: 28)
+                    .background(BCLTheme.control, in: RoundedRectangle(cornerRadius: BCLTheme.radiusControl))
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func ghostCell(width: CGFloat, height: CGFloat) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: BCLTheme.radiusCard)
+                .fill(BCLTheme.well)
+                .frame(width: 110, height: 110)
+                .overlay(RoundedRectangle(cornerRadius: BCLTheme.radiusCard).strokeBorder(BCLTheme.hairline, lineWidth: 1))
+            RoundedRectangle(cornerRadius: 3)
+                .strokeBorder(BCLTheme.textPrimary.opacity(0.14), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                .frame(width: width, height: height)
         }
     }
 
@@ -611,6 +665,7 @@ struct LibraryView: View {
 
 private struct GridCell: View {
     let item: LibraryEntry
+    let displayStatus: ClipDisplayStatus?
     let isSelected: Bool
     let isRenaming: Bool
     let progress: Double?
@@ -624,34 +679,74 @@ private struct GridCell: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            thumbnail
-                .aspectRatio(16.0 / 9.0, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+            well
+                // Uniform ~1:1.06 cells: orientation reads from the thumbnail's
+                // silhouette inside the well, and the grid never reflows.
+                .aspectRatio(1.0 / 1.06, contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: BCLTheme.radiusCard))
+                .overlay(alignment: .topLeading) { statusBadge }
                 .overlay(alignment: .bottomTrailing) { durationBadge }
-                .overlay(alignment: .bottom) { progressBar }
                 .overlay { regenOverlay }
                 .overlay {
-                    RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(isSelected ? Color.accentColor : .clear, lineWidth: 3)
+                    RoundedRectangle(cornerRadius: BCLTheme.radiusCard)
+                        .strokeBorder(isSelected ? BCLTheme.accent : BCLTheme.hairline, lineWidth: isSelected ? 2 : 1)
                 }
+                .overlay(alignment: .topTrailing) { selectionCheck }
+                .shadow(color: isSelected ? BCLTheme.accent.opacity(0.35) : .clear, radius: 8)
             nameRow
         }
         .contentShape(Rectangle())
     }
 
     @ViewBuilder
-    private var thumbnail: some View {
+    private var well: some View {
         switch item {
         case .folder:
             ZStack {
-                RoundedRectangle(cornerRadius: 8).fill(.quaternary)
+                RoundedRectangle(cornerRadius: BCLTheme.radiusCard).fill(BCLTheme.raised)
                 Image(systemName: "folder.fill")
-                    .font(.system(size: 44))
-                    .foregroundStyle(.tint)
+                    .font(.system(size: 44, weight: .light))
+                    .foregroundStyle(BCLTheme.textPrimary.opacity(0.35))
             }
         case .clip(let clip):
-            ClipThumbnail(clip: clip, loader: loader, skim: skim, skimEnabled: clip.isPlayable)
-                .opacity(clip.isPlayable ? 1 : 0.5)
+            ZStack {
+                RoundedRectangle(cornerRadius: BCLTheme.radiusCard).fill(BCLTheme.well)
+                ClipThumbnail(clip: clip, loader: loader, skim: skim, skimEnabled: clip.isPlayable)
+                    .padding(8)
+                    .opacity(displayStatus == .uploading || displayStatus == .ingesting ? 0.55 : 1)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var statusBadge: some View {
+        if let displayStatus {
+            Group {
+                if displayStatus == .uploading, let progress {
+                    HStack(spacing: 5) {
+                        UploadRing(fraction: progress, size: 11)
+                        Text("\(Int(progress * 100))%")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    }
+                    .foregroundStyle(BCLTheme.accent)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(BCLTheme.accent.opacity(0.14), in: Capsule())
+                } else {
+                    StatusChip(displayStatus, compact: true)
+                }
+            }
+            .padding(6)
+        }
+    }
+
+    @ViewBuilder
+    private var selectionCheck: some View {
+        if isSelected {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 14))
+                .foregroundStyle(.white, BCLTheme.accent)
+                .padding(6)
         }
     }
 
@@ -665,14 +760,12 @@ private struct GridCell: View {
                 .onSubmit { commitRename() }
                 .onExitCommand { cancelRename() }
         } else {
-            HStack(spacing: 5) {
-                if let clip = item.clip { statusDot(clip.status) }
-                Text(item.name)
-                    .font(.callout)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-            .padding(.horizontal, 2)
+            Text(item.name)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(BCLTheme.textPrimary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .padding(.horizontal, 2)
         }
     }
 
@@ -680,19 +773,11 @@ private struct GridCell: View {
     private var durationBadge: some View {
         if let duration = item.clip?.durationFormatted {
             Text(duration)
-                .font(.caption2.monospacedDigit())
+                .font(.system(size: 10, design: .monospaced))
                 .padding(.horizontal, 5).padding(.vertical, 2)
-                .background(.black.opacity(0.65), in: RoundedRectangle(cornerRadius: 4))
+                .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: BCLTheme.radiusBadge))
                 .foregroundStyle(.white)
-                .padding(5)
-        }
-    }
-
-    @ViewBuilder
-    private var progressBar: some View {
-        if let progress {
-            ProgressView(value: progress)
-                .padding(.horizontal, 8).padding(.bottom, 8)
+                .padding(6)
         }
     }
 
@@ -707,21 +792,6 @@ private struct GridCell: View {
         }
     }
 
-    private func statusDot(_ status: ClipStatus) -> some View {
-        Circle()
-            .fill(Self.color(for: status))
-            .frame(width: 7, height: 7)
-            .help(status.rawValue.capitalized)
-    }
-
-    private static func color(for status: ClipStatus) -> Color {
-        switch status {
-        case .ingesting: return .orange
-        case .uploading: return .blue
-        case .ready: return .green
-        case .failed: return .red
-        }
-    }
 }
 
 // MARK: - Skimming thumbnail (ported from VideoTag's ClipThumbnailView)

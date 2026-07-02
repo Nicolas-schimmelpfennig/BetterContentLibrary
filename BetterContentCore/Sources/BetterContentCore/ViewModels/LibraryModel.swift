@@ -16,16 +16,34 @@ import Observation
 public final class LibraryModel {
     private let clips: ClipsService
     private let folders: FoldersService
+    private let schedules = SchedulesService()
     public let orgId: UUID
 
     /// Breadcrumb from root; the last element is the current folder (empty = root).
     public private(set) var path: [Folder] = []
     public private(set) var subfolders: [Folder] = []
     public private(set) var items: [Clip] = []
+    /// The whole org's clips (across folders), newest first — powers the
+    /// Pipeline smart filters and their sidebar counts.
+    public private(set) var allClips: [Clip] = []
+    /// The org's schedules grouped by clip, for deriving display status.
+    public private(set) var schedulesByClip: [UUID: [Schedule]] = [:]
     public private(set) var isLoading = false
     public var errorMessage: String?
 
     public var currentFolder: Folder? { path.last }
+
+    /// The badge state for a clip: transfer status merged with schedule-derived
+    /// presentation states (scheduled/posted).
+    public func displayStatus(for clip: Clip) -> ClipDisplayStatus {
+        ClipDisplayStatus.derive(clip: clip, schedules: schedulesByClip[clip.id] ?? [])
+    }
+
+    /// Org-wide clips whose display status matches — the Pipeline smart lists
+    /// ("Needs scheduling" = ready, Scheduled, Posted).
+    public func clips(withDisplayStatus status: ClipDisplayStatus) -> [Clip] {
+        allClips.filter { displayStatus(for: $0) == status }
+    }
 
     /// Finder/Safari-style location history. Each entry is a full breadcrumb path;
     /// the current `path` is not in either stack.
@@ -46,8 +64,12 @@ public final class LibraryModel {
         do {
             async let subs = folders.list(parent: currentFolder?.id)
             async let cl = clips.list(inFolder: currentFolder?.id)
+            async let all = clips.list()
+            async let sch = schedules.listAll()
             subfolders = try await subs
             items = try await cl
+            allClips = try await all
+            schedulesByClip = Dictionary(grouping: try await sch, by: \.clipId)
         } catch {
             errorMessage = error.localizedDescription
         }

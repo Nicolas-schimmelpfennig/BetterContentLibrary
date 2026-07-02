@@ -133,16 +133,55 @@ public final class ScheduleModel {
         }
     }
 
-    public func add(clipId: UUID, platform: Platform, at date: Date, notes: String?, notifyProfileId: UUID?) async {
+    public func add(
+        clipId: UUID,
+        platform: Platform,
+        at date: Date,
+        caption: String? = nil,
+        notes: String?,
+        notifyProfileId: UUID?
+    ) async {
         do {
             _ = try await schedules.create(
                 clipId: clipId, orgId: orgId, platform: platform,
-                scheduledAt: date, notes: notes, notifyProfileId: notifyProfileId
+                scheduledAt: date, caption: caption, notes: notes,
+                notifyProfileId: notifyProfileId
             )
             await load()
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    /// Marks a schedule posted (records `posted_at`) — the manual "I published
+    /// it" confirmation.
+    public func markPosted(_ id: UUID) async {
+        do {
+            try await schedules.markPosted(id)
+            await load()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Skips a schedule without deleting it (gray, struck-through in chips).
+    public func skip(_ id: UUID) async {
+        do {
+            try await schedules.setStatus(id, .skipped)
+            await load()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// The next planned post within the coming 24 hours, if any — powers the
+    /// iOS "Up next" card.
+    public var upNext: Schedule? {
+        let now = Date()
+        let horizon = now.addingTimeInterval(24 * 3600)
+        return items
+            .filter { $0.status == .planned && $0.scheduledAt > now.addingTimeInterval(-3600) && $0.scheduledAt <= horizon }
+            .min { $0.scheduledAt < $1.scheduledAt }
     }
 
     /// Moves a schedule to a different day, keeping its time of day.
