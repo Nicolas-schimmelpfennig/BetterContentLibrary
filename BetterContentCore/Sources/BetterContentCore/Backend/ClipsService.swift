@@ -83,9 +83,9 @@ public final class ClipsService: Sendable {
         try await patch(id, FolderPatch(folder_id: folderId?.uuidString))
     }
 
-    /// Removes a clip row. The caller is responsible for deleting the clip's R2
-    /// objects (video + thumbnail) first, since this drops the `r2_key` needed to
-    /// locate them.
+    /// Removes a clip row directly. Only for cleaning up half-created rows that
+    /// have no R2 objects yet — a fully uploaded clip must be deleted through
+    /// `StorageService.deleteClip`, which removes the objects server-side first.
     public func delete(_ id: UUID) async throws {
         try await client
             .from("clips")
@@ -126,6 +126,18 @@ public final class ClipsService: Sendable {
             .select()
             .order("created_at", ascending: false)
             .limit(limit)
+            .execute()
+            .value
+    }
+
+    /// Fetches specific clips by id (e.g. resolving schedule references that
+    /// fell outside the capped org-wide list).
+    public func list(ids: [UUID]) async throws -> [Clip] {
+        guard !ids.isEmpty else { return [] }
+        return try await client
+            .from("clips")
+            .select()
+            .in("id", values: ids.map(\.uuidString))
             .execute()
             .value
     }

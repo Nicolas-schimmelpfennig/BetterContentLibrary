@@ -108,16 +108,11 @@ public final class IngestCoordinator {
     // MARK: Uploader wiring
 
     private func wireUploader() {
-        // Terminal handlers fire for every completion, including those replayed
-        // after relaunch, so clip status is always reconciled.
-        uploader.onFinished = { [clips] clipId, _ in
-            Task { try? await clips.setStatus(clipId, .ready) }
-        }
-        uploader.onFailed = { [clips] clipId, _ in
-            // No 'failed' status in the schema yet — revert so it can be retried.
-            Task { try? await clips.setStatus(clipId, .ingesting) }
-        }
-
+        // Status reconciliation is owned process-wide by UploadReconciler; this
+        // loop only mirrors progress into the observable UI state.
+        // NOTE: if the watch-folder feature is revived, files should be staged
+        // through PendingUploadStore (and tracked) before enqueueing, so the
+        // launch sweep covers them like drag-and-drop uploads.
         eventTask = Task { [weak self] in
             guard let uploader = self?.uploader else { return }
             for await event in uploader.events() {

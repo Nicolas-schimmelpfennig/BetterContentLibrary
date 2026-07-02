@@ -44,5 +44,6 @@ struct MainTabView: View {
         .onChange(of: deepLink.scheduleDay) { _, day in
             if day != nil { selectedTab = .schedule }
         }
+        .onDisappear { model.tearDown() }
     }
 }

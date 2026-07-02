@@ -44,33 +44,42 @@ public struct ClipDraft: Identifiable, Sendable {
     }
 }
 
+/// Thrown when a picked file can't enter the upload pipeline.
+public enum UploadPipelineError: LocalizedError, Sendable {
+    /// The same bytes (by content hash) already exist in the org's library.
+    case duplicate(existingTitle: String)
+
+    public var errorDescription: String? {
+        switch self {
+        case let .duplicate(existingTitle):
+            return "This video is already in the library as “\(existingTitle)”."
+        }
+    }
+}
+
 /// Orchestrates adding a user-chosen video: read its metadata into an editable
 /// draft, then (once confirmed) create the clip row and hand the bytes to the
 /// background uploader.
 ///
-/// Construct one per signed-in session; its initializer wires the background
-/// uploader's terminal callbacks so a clip's status is reconciled to `.ready`
-/// (or back to `.ingesting` on failure) even across app relaunch.
+/// Status reconciliation for finished/failed transfers is *not* wired here —
+/// `UploadReconciler` owns that process-wide, so UI objects can come and go
+/// without fighting over callbacks.
 public final class ClipUploader: Sendable {
     private let clips: ClipsService
     private let storage: StorageService
     private let uploader: BackgroundUploadService
+    private let store: PendingUploadStore
 
     public init(
         clips: ClipsService = ClipsService(),
         storage: StorageService = StorageService(),
-        uploader: BackgroundUploadService = .shared
+        uploader: BackgroundUploadService = .shared,
+        store: PendingUploadStore = .shared
     ) {
         self.clips = clips
         self.storage = storage
         self.uploader = uploader
-
-        uploader.onFinished = { clipId, _ in
-            Task { try? await clips.setStatus(clipId, .ready) }
-        }
-        uploader.onFailed = { clipId, _ in
-            Task { try? await clips.setStatus(clipId, .ingesting) }
-        }
+        self.store = store
     }
 
     /// Live upload progress/finish/fail events, for UI.
@@ -108,41 +117,62 @@ public final class ClipUploader: Sendable {
         uploadedBy: UUID?,
         folderId: UUID? = nil
     ) async throws -> Clip {
+        // Dedupe up front: the DB's unique (org, content_hash) index would
+        // reject the metadata write anyway; checking first gives a clear error
+        // and no orphan row. A failed earlier attempt at the same file is dead
+        // weight — clear it (objects + row, server-side) and upload fresh.
+        if let existing = try await clips.findByHash(draft.contentHash, orgId: orgId) {
+            if existing.status == .failed {
+                try await storage.deleteClip(clipId: existing.id)
+            } else {
+                throw UploadPipelineError.duplicate(existingTitle: existing.title)
+            }
+        }
+
         let clip = try await clips.create(
             title: draft.title,
             orgId: orgId,
             uploadedBy: uploadedBy,
             folderId: folderId
         )
-        try await clips.applyMetadata(
-            id: clip.id,
-            durationS: draft.durationS,
-            width: draft.width,
-            height: draft.height,
-            orientation: draft.orientation,
-            contentHash: draft.contentHash,
-            fileSize: draft.fileSize,
-            capturedAt: draft.capturedAt
-        )
 
-        // Persist the poster thumbnail (best-effort; don't fail the upload over it).
-        if let thumbnail = draft.thumbnailJPEG,
-           let key = try? await storage.uploadThumbnail(thumbnail, clipId: clip.id) {
-            try? await clips.setThumbKey(clip.id, key)
+        do {
+            try await clips.applyMetadata(
+                id: clip.id,
+                durationS: draft.durationS,
+                width: draft.width,
+                height: draft.height,
+                orientation: draft.orientation,
+                contentHash: draft.contentHash,
+                fileSize: draft.fileSize,
+                capturedAt: draft.capturedAt
+            )
+
+            // Persist the poster thumbnail (best-effort; don't fail the upload over it).
+            if let thumbnail = draft.thumbnailJPEG,
+               let key = try? await storage.uploadThumbnail(thumbnail, clipId: clip.id) {
+                try? await clips.setThumbKey(clip.id, key)
+            }
+
+            let ext = draft.fileURL.pathExtension.isEmpty ? "mp4" : draft.fileURL.pathExtension.lowercased()
+            let contentType = Self.contentType(forExtension: ext)
+            let ticket = try await storage.requestUploadTicket(ext: ext, contentType: contentType)
+
+            try await clips.markUploading(id: clip.id, r2Key: ticket.key)
+            store.track(clipId: clip.id, fileURL: draft.fileURL)
+            uploader.enqueue(
+                fileURL: draft.fileURL,
+                to: ticket.uploadUrl,
+                key: ticket.key,
+                clipId: clip.id,
+                contentType: contentType
+            )
+        } catch {
+            // Don't leave a half-created row behind; the draft file is intact,
+            // so the user can simply try again.
+            try? await clips.delete(clip.id)
+            throw error
         }
-
-        let ext = draft.fileURL.pathExtension.isEmpty ? "mp4" : draft.fileURL.pathExtension.lowercased()
-        let contentType = Self.contentType(forExtension: ext)
-        let ticket = try await storage.requestUploadTicket(ext: ext, contentType: contentType)
-
-        try await clips.markUploading(id: clip.id, r2Key: ticket.key)
-        uploader.enqueue(
-            fileURL: draft.fileURL,
-            to: ticket.uploadUrl,
-            key: ticket.key,
-            clipId: clip.id,
-            contentType: contentType
-        )
         return clip
     }
 

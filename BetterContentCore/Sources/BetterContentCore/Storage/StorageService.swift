@@ -90,10 +90,12 @@ public final class StorageService: Sendable {
         try await requestDownloadTicket(clipId: clipId).downloadUrl
     }
 
-    /// Deletes a clip's R2 objects (the video and its thumbnail). The Edge
-    /// Function performs the deletes server-side using the clip's `r2_key`, so
-    /// this must be called *before* the clip row is removed from the database.
-    public func deleteObjects(clipId: UUID) async throws {
+    /// Permanently deletes a clip: its R2 objects (video + thumbnail) and then
+    /// its database row, all server-side in the `r2-sign` Edge Function so the
+    /// ordering (bytes before the row that points at them) lives in one place.
+    /// Throws if the objects couldn't be removed — the row is kept in that case
+    /// so the delete can be retried.
+    public func deleteClip(clipId: UUID) async throws {
         let _: DeleteResponse = try await client.functions.invoke(
             "r2-sign",
             options: FunctionInvokeOptions(body: DeleteRequest(clipId: clipId.uuidString))

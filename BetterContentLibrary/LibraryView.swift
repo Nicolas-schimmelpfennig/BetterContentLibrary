@@ -719,9 +719,7 @@ private struct GridCell: View {
         case .ingesting: return .orange
         case .uploading: return .blue
         case .ready: return .green
-        case .scheduled: return .purple
-        case .downloaded: return .teal
-        case .posted: return .gray
+        case .failed: return .red
         }
     }
 }

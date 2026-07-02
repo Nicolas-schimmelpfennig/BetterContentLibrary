@@ -10,7 +10,8 @@ import Observation
 
 extension Clip {
     /// A playable clip has finished uploading, so its video exists in R2.
-    public var isPlayable: Bool { status != .ingesting && status != .uploading }
+    /// (`failed` means the bytes never landed, so it is not playable.)
+    public var isPlayable: Bool { status == .ready }
 }
 
 /// Loads and caches clip poster thumbnails (memory + a durable on-disk JPEG
@@ -93,8 +94,9 @@ public final class AppModel {
     private let storage = StorageService()
     private let clips = ClipsService()
     private let uploader = ClipUploader()
+    private let pendingUploads = PendingUploadStore.shared
+    private let realtime = RealtimeSync()
     private var eventTask: Task<Void, Never>?
-    private var pendingFiles: [UUID: URL] = [:]
 
     /// Clips currently having their thumbnail regenerated, for in-UI feedback.
     public private(set) var regenerating: Set<UUID> = []
@@ -103,27 +105,49 @@ public final class AppModel {
     /// poster is attempted at most once (even if regeneration fails).
     private var backfillAttempted: Set<UUID> = []
 
-    private let pendingDir: URL = {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let dir = base.appendingPathComponent("BetterContentLibrary/PendingUploads", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }()
-
     public init(profile: Profile) {
         self.profile = profile
         self.library = LibraryModel(orgId: profile.orgId)
         self.schedule = ScheduleModel(orgId: profile.orgId, currentProfileId: profile.id)
+
+        // Reconciliation first: registering the terminal observer drains any
+        // outcomes the system replayed before sign-in, then the sweep resolves
+        // uploads that died with a previous process.
+        UploadReconciler.shared.activate()
         observeUploads()
+        Task { [weak self] in
+            if await UploadReconciler.shared.sweepStalled() {
+                await self?.library.load()
+            }
+        }
+
+        // Live cross-device sync: another device's change reloads this one.
+        realtime.onClipsChange = { [weak self] in
+            Task {
+                await self?.library.load()
+                await self?.schedule.load()
+            }
+        }
+        realtime.onSchedulesChange = { [weak self] in
+            Task { await self?.schedule.load() }
+        }
+        realtime.start()
+    }
+
+    /// Releases the session's live resources (realtime channel, event stream).
+    /// Call when the signed-in shell goes away; a new sign-in builds a fresh model.
+    public func tearDown() {
+        realtime.stop()
+        eventTask?.cancel()
+        eventTask = nil
     }
 
     public func importFile(_ source: URL) async throws -> ClipDraft {
         let accessed = source.startAccessingSecurityScopedResource()
         defer { if accessed { source.stopAccessingSecurityScopedResource() } }
 
-        let dest = pendingDir.appendingPathComponent("\(UUID().uuidString)-\(source.lastPathComponent)")
-        try FileManager.default.copyItem(at: source, to: dest)
-        return try await uploader.makeDraft(from: dest)
+        let staged = try pendingUploads.stage(source)
+        return try await uploader.makeDraft(from: staged)
     }
 
     /// Confirms a draft and starts the background upload, landing it in whatever
@@ -139,7 +163,6 @@ public final class AppModel {
             // Persist the poster we already rendered for the draft, so the card
             // shows it instantly — no R2 round-trip, no re-decode.
             if let jpeg = draft.thumbnailJPEG { thumbnails.store(jpeg, for: clip.id) }
-            pendingFiles[clip.id] = draft.fileURL
             uploadProgress[clip.id] = 0
             await library.load()
         } catch {
@@ -147,15 +170,12 @@ public final class AppModel {
         }
     }
 
-    /// Permanently deletes clips: their R2 objects (video + poster), then the DB
-    /// rows, then the local poster cache. Reloads the library once at the end.
+    /// Permanently deletes clips — R2 objects and row in one server-side call —
+    /// then the local poster cache. Reloads the library once at the end.
     public func deleteClips(_ clips: [Clip]) async {
         for clip in clips {
             do {
-                // Delete R2 objects first — the Edge Function needs the row's
-                // r2_key, which the DB delete below removes.
-                try? await storage.deleteObjects(clipId: clip.id)
-                try await self.clips.delete(clip.id)
+                try await storage.deleteClip(clipId: clip.id)
                 thumbnails.invalidate(clipId: clip.id)
                 uploadProgress[clip.id] = nil
             } catch {
@@ -244,6 +264,8 @@ public final class AppModel {
     }
 
     private func observeUploads() {
+        // UI mirroring only — status writes and staged-file cleanup are owned
+        // by UploadReconciler, which also covers events replayed at relaunch.
         eventTask = Task { [weak self] in
             guard let uploader = self?.uploader else { return }
             for await event in uploader.events() {
@@ -253,20 +275,13 @@ public final class AppModel {
                     uploadProgress[clipId] = fraction
                 case let .finished(clipId, _):
                     uploadProgress[clipId] = nil
-                    cleanUpPendingFile(clipId)
                     await library.load()
                 case let .failed(clipId, message):
                     uploadProgress[clipId] = nil
-                    cleanUpPendingFile(clipId)
                     library.errorMessage = message
+                    await library.load()
                 }
             }
-        }
-    }
-
-    private func cleanUpPendingFile(_ clipId: UUID) {
-        if let url = pendingFiles.removeValue(forKey: clipId) {
-            try? FileManager.default.removeItem(at: url)
         }
     }
 }

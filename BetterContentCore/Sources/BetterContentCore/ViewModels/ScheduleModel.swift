@@ -46,7 +46,7 @@ public final class ScheduleModel {
     /// Clips eligible to be scheduled (already uploaded).
     public var schedulableClips: [Clip] {
         clipsById.values
-            .filter { $0.status != .ingesting && $0.status != .uploading }
+            .filter { $0.status == .ready }
             .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
     }
 
@@ -118,6 +118,16 @@ public final class ScheduleModel {
             items = try await fetchedSchedules
             clipsById = Dictionary(uniqueKeysWithValues: try await fetchedClips.map { ($0.id, $0) })
             profilesById = Dictionary(uniqueKeysWithValues: try await fetchedProfiles.map { ($0.id, $0) })
+
+            // The org-wide clip list is capped, so a schedule can reference a
+            // clip that didn't make the cut (old clip, busy library). Fetch the
+            // stragglers by id so every calendar chip resolves its clip.
+            let missing = Set(items.map(\.clipId)).subtracting(clipsById.keys)
+            if !missing.isEmpty {
+                for clip in try await clips.list(ids: Array(missing)) {
+                    clipsById[clip.id] = clip
+                }
+            }
         } catch {
             errorMessage = error.localizedDescription
         }

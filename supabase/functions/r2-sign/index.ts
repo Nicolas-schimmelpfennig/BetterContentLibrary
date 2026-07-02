@@ -12,7 +12,7 @@
 // Response:
 //   upload   -> { "uploadUrl": "...", "key": "orgs/<org>/clips/<uuid>.mp4" }
 //   download -> { "downloadUrl": "...", "key": "..." }
-//   delete   -> { "ok": true }
+//   delete   -> { "ok": true }   (removes the R2 objects AND the clips row)
 // Thumbnails live at a deterministic key: orgs/<org>/thumbs/<clipId>.jpg
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -134,22 +134,31 @@ Deno.serve(async (req) => {
     if (typeof clipId !== "string") return json({ error: "clipId required" }, 400);
 
     // RLS confirms the clip belongs to the caller's org. The thumbnail key is
-    // deterministic; the video key comes from the row. We delete the objects
-    // server-side (the worker holds the R2 secret); the caller removes the row.
-    const { data: clip } = await supabase
+    // deterministic; the video key comes from the row.
+    const { data: clip, error: clipErr } = await supabase
       .from("clips")
       .select("r2_key")
       .eq("id", clipId)
-      .single();
+      .maybeSingle();
+    if (clipErr) return json({ error: clipErr.message }, 500);
+    if (!clip) return json({ error: "Clip not found" }, 404);
 
+    // Objects first: the row holds the only pointer to the video object, so it
+    // must outlive the bytes. S3 DELETE is idempotent (404/204 both mean gone);
+    // anything else aborts and keeps the row so the delete can be retried.
     const keys = [thumbKey(clipId)];
-    if (clip?.r2_key) keys.push(clip.r2_key as string);
+    if (clip.r2_key) keys.push(clip.r2_key as string);
+    for (const key of keys) {
+      const res = await aws.fetch(`${R2_ENDPOINT}/${R2_BUCKET}/${key}`, { method: "DELETE" });
+      if (!res.ok && res.status !== 404) {
+        return json({ error: `R2 delete failed for ${key} (HTTP ${res.status})` }, 502);
+      }
+    }
 
-    // Best-effort: a missing object (404) is fine — the goal is that it's gone.
-    await Promise.all(keys.map(async (key) => {
-      const url = `${R2_ENDPOINT}/${R2_BUCKET}/${key}`;
-      try { await aws.fetch(url, { method: "DELETE" }); } catch { /* ignore */ }
-    }));
+    // Row last, through the caller's JWT so RLS applies. Schedules, downloads,
+    // and clip_tags rows cascade with it.
+    const { error: rowErr } = await supabase.from("clips").delete().eq("id", clipId);
+    if (rowErr) return json({ error: rowErr.message }, 500);
     return json({ ok: true });
   }
 

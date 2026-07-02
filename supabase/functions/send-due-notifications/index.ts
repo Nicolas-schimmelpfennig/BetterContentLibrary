@@ -1,7 +1,11 @@
-// send-due-notifications — called every minute by pg_cron. Finds scheduled posts
-// whose time has arrived (scheduled_at <= now, not yet notified, with a notify
-// target) and sends an APNs "time to post" push to that user's devices, then
-// stamps notified_at so each fires once.
+// send-due-notifications — called every minute by pg_cron. Finds planned posts
+// coming up within the lead window (scheduled_at <= now + NOTIFY_LEAD_SECONDS,
+// not yet notified, with a notify target) and sends an APNs "time to post" push
+// to that user's devices, then stamps notified_at so each fires once.
+//
+// Schedules more than STALE_AFTER_HOURS past are retired silently (stamped
+// without sending) so a backlog — e.g. cron downtime or rows edited into the
+// past — never triggers a blast of stale pushes.
 //
 // Auth: invoked by pg_cron with a shared secret in the `x-cron-secret` header
 // (verify_jwt is off so the gateway lets the call through to this check). DB
@@ -18,6 +22,12 @@ const APNS_KEY_ID = Deno.env.get("APNS_KEY_ID");
 const APNS_TEAM_ID = Deno.env.get("APNS_TEAM_ID");
 const APNS_PRIVATE_KEY = Deno.env.get("APNS_PRIVATE_KEY");
 const APNS_BUNDLE_ID = Deno.env.get("APNS_BUNDLE_ID");
+
+// How far ahead of scheduled_at the push fires (default 15 min, per the
+// architecture doc), and how far past it a never-notified schedule is
+// considered dead rather than due.
+const NOTIFY_LEAD_SECONDS = Number(Deno.env.get("NOTIFY_LEAD_SECONDS") ?? "900");
+const STALE_AFTER_HOURS = 24;
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -79,6 +89,17 @@ const PLATFORM_NAMES: Record<string, string> = {
   linkedin: "LinkedIn", other: "the platform",
 };
 
+/// The post's local wall-clock time, using the timezone captured when it was
+/// scheduled (falls back to UTC if the stored zone is invalid).
+function localTime(iso: string, tz: string | null): string {
+  const opts = { hour: "2-digit", minute: "2-digit" } as const;
+  try {
+    return new Intl.DateTimeFormat("en-GB", { ...opts, timeZone: tz ?? "UTC" }).format(new Date(iso));
+  } catch {
+    return new Intl.DateTimeFormat("en-GB", { ...opts, timeZone: "UTC" }).format(new Date(iso));
+  }
+}
+
 async function sendToDevice(
   jwt: string,
   device: { apns_token: string; environment: string },
@@ -119,12 +140,25 @@ Deno.serve(async (req) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
 
-  const { data: due, error } = await admin
+  const now = Date.now();
+  const horizon = new Date(now + NOTIFY_LEAD_SECONDS * 1000).toISOString();
+  const staleCutoff = new Date(now - STALE_AFTER_HOURS * 3600 * 1000).toISOString();
+
+  // Retire long-past schedules without sending, so they stop matching the scan.
+  await admin
     .from("schedules")
-    .select("id, clip_id, platform, scheduled_at, notify_profile_id, clips(title)")
+    .update({ notified_at: new Date().toISOString() })
     .is("notified_at", null)
     .not("notify_profile_id", "is", null)
-    .lte("scheduled_at", new Date().toISOString())
+    .lt("scheduled_at", staleCutoff);
+
+  const { data: due, error } = await admin
+    .from("schedules")
+    .select("id, clip_id, platform, scheduled_at, timezone, notify_profile_id, clips(title)")
+    .is("notified_at", null)
+    .eq("status", "planned")
+    .not("notify_profile_id", "is", null)
+    .lte("scheduled_at", horizon)
     .order("scheduled_at", { ascending: true })
     .limit(50);
 
@@ -143,8 +177,15 @@ Deno.serve(async (req) => {
     // deno-lint-ignore no-explicit-any
     const title = (s as any).clips?.title ?? "your video";
     const platform = PLATFORM_NAMES[s.platform] ?? s.platform;
+    const isUpcoming = new Date(s.scheduled_at).getTime() > now;
     const payload = {
-      aps: { alert: { title: "Time to post 📲", body: `Post “${title}” to ${platform}` }, sound: "default" },
+      aps: {
+        alert: {
+          title: isUpcoming ? "Upcoming post ⏰" : "Time to post 📲",
+          body: `Post “${title}” to ${platform} at ${localTime(s.scheduled_at, s.timezone)}`,
+        },
+        sound: "default",
+      },
       schedule_id: s.id,
       clip_id: s.clip_id,
       scheduled_at: s.scheduled_at,

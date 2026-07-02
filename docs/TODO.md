@@ -23,8 +23,8 @@ Living checklist of where we are. See [ARCHITECTURE.md](ARCHITECTURE.md) for the
 - [x] Locked down SECURITY DEFINER functions; security advisor clean (migration 0004)
 - [x] Auth provider config in dashboard (email enabled, confirm-on-signup) — Nicolas
 - [x] Edge Function: presigned R2 upload/download URLs (`r2-sign`, deployed & tested end-to-end)
-- [ ] Edge Function: APNs push sender (needs .p8)
-- [ ] pg_cron job: scan schedules due ~15 min out → push (Phase 4)
+- [x] Edge Function: APNs push sender (`send-due-notifications`, Phase 4)
+- [x] pg_cron job: scan schedules due ~15 min out → push (Phase 4; lead window added 2026-07-02)
 
 ### Cloudflare R2
 - [x] Create R2 bucket (`better-content-libray-bucket`) + S3 API token (Nicolas)
@@ -66,9 +66,21 @@ Watch-folder shelved for now (core `FolderWatcher`/`IngestCoordinator` kept, app
 - [x] **Delete videos** — `ClipsService.delete`, `StorageService.deleteObjects` + new `r2-sign` **delete** action (v3, deletes video + thumb server-side), `AppModel.deleteClips` (R2 → DB → local cache). Wired into grid + list context menus (selection-aware) with a destructive confirmation dialog.
 - [x] **Back/forward history navigation** — `LibraryModel` back/forward stacks (`goBack`/`goForward`/`canGoBack`/`canGoForward`), top-left toolbar `ControlGroup` (`.navigation` style) with ⌘[ / ⌘]; history pruned when a folder is deleted.
 - [ ] Library grid filters (status/platform/tag/orientation)
-- [ ] Realtime subscription so the grid updates live (currently loads on appear + after uploads + manual refresh)
+- [x] Realtime subscription so the grid updates live (`RealtimeSync` in core, wired into `AppModel`; clips + schedules, debounced)
 - [ ] Multi-clip drag (currently drags the single clip under the cursor) and arrow-key scroll-into-view
-- [ ] Add a `failed` clip_status (failed uploads currently revert to `ingesting` for retry)
+- [x] Add a `failed` clip_status (migration 0009; `clip_status` is transfer-only now — scheduled/downloaded/posted enum values removed, derived from schedules/downloads instead)
+
+#### Foundation hardening (2026-07-02)
+- [x] **Schema committed to the repo** — all applied migrations exported to `supabase/migrations/` (0001–0011, filenames match the remote history); found + fixed along the way: 0007's notify-scan index had silently no-opped (name collision, fixed in 0010), the live cron job had drifted from 0008 (re-asserted in 0010 with the x-cron-secret form)
+- [x] **Durable upload lifecycle** — `PendingUploadStore` (staging dir + persistent clip↔file registry, device-scoped), `UploadReconciler` (single owner of status reconciliation; buffered terminal outcomes fix the launch race where completions replayed before sign-in were dropped; launch sweep marks dead uploads `failed`, cleans orphaned staged files, retries status writes with backoff)
+- [x] **Singleton callback landmine removed** — `BackgroundUploadService` now takes a list of terminal observers (with pre-registration buffering) instead of single `onFinished`/`onFailed` closure slots that `ClipUploader` and `IngestCoordinator` fought over
+- [x] **Dedupe in the real upload path** — `ClipUploader.upload` checks `content_hash` first: a `failed` twin is deleted and replaced, a live twin raises a clear "already in library" error (the DB unique index would have rejected it cryptically); half-created rows are cleaned up if the pipeline throws mid-way
+- [x] **Delete is one server-side call** — `r2-sign` delete removes R2 objects then the row (aborts before the row if objects fail, so bytes can't be orphaned); clients call `StorageService.deleteClip`
+- [x] **Push hardening** — 15-min lead (`NOTIFY_LEAD_SECONDS`), >24 h-stale schedules retired silently, only `planned` schedules notify, body includes the post's local time (uses the stored `timezone`)
+- [x] **Calendar clip resolution** — `ScheduleModel.load` fetches schedule-referenced clips by id when they fall outside the capped org list (no more missing chips past 200 clips)
+- [x] **Security hygiene** — pg_net out of `public` (0011), `current_org_id()` moved to non-API `internal` schema (0011), advisors clean; APNs `.p8` moved out of the repo to `~/Secrets/BetterContentLibrary/`
+- [ ] Enable leaked-password protection (dashboard: Auth → Providers → Password — manual toggle, no API)
+- [ ] Surface `failed` clips with a retry affordance in the UI (dedupe already allows re-upload of the same file)
 
 ## Phase 2 — Scheduling (macOS)
 - [ ] Calendar view (month/week) with clips placed on dates
@@ -94,7 +106,7 @@ Watch-folder shelved for now (core `FolderWatcher`/`IngestCoordinator` kept, app
 - [x] **iOS APNs registration** — `aps-environment` entitlement added; `PushManager` requests permission, registers for remote notifications, and upserts the token into `devices` (new `DevicesService`, conflict on `apns_token`, environment sandbox/production via `#if DEBUG`). Activated from `MainTabView` once signed in.
 - [x] **Scheduled send** — edge function `send-due-notifications` (deployed): finds due schedules (`scheduled_at <= now`, `notified_at is null`, has notify target), signs an ES256 APNs JWT from the `.p8` (cached ~40 min), pushes to the notify-user's devices (sandbox/prod host per device), stamps `notified_at` so each fires once. Driven by a `pg_cron` job (migration 0008) every minute via `pg_net`, authed with the service-role key read from Vault (`service_role_key`).
 - [x] **Deep link** — notification payload carries `scheduled_at`/`schedule_id`/`clip_id`; tap routes via `DeepLinkCenter` to the Schedule tab and opens that day's `DayDetailSheet` (cold launch + running).
-- [ ] **BLOCKED on user setup** (see below) — create the APNs `.p8` Auth Key + enable Push capability on the App ID; set edge secrets `APNS_KEY_ID`/`APNS_TEAM_ID`/`APNS_PRIVATE_KEY`/`APNS_BUNDLE_ID`; store the service-role key in Vault as `service_role_key`. Until done the cron call 401s / the function returns "APNs not configured" (safe no-op).
+- [x] APNs setup complete — `.p8` created (now stored at `~/Secrets/BetterContentLibrary/`, contents in the `APNS_PRIVATE_KEY` edge secret), cron authed via Vault `cron_secret`; end-to-end push confirmed working.
 - [ ] Notification → download deep-link handling (currently opens the post card; download is one more tap)
 
 ## Phase 5 — Productize (later)

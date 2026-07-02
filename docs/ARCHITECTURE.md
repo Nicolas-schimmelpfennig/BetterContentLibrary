@@ -57,35 +57,61 @@ Firebase (video egress cost, Firestore worse fit than SQL for relational data).
 ## Data model (Postgres)
 
 Multi-tenant from day one: every row carries `org_id`, and Row-Level Security
-ensures users only see their org's rows.
+ensures users only see their org's rows. The schema lives in
+`supabase/migrations/` — the repo is the source of truth; changes go through
+new migration files, never ad-hoc DDL.
 
 - **organizations** — the tenant (`id`, `name`)
 - **profiles** — one per auth user (`id`, `org_id`, `display_name`, `role`: owner / editor / manager / viewer)
-- **clips** — `id`, `org_id`, `uploaded_by`, `title`, `r2_key`, `file_size`, `duration_s`, `width`, `height`, `orientation` (vertical/horizontal/square), `content_hash`, `status`, `created_at`
-- **schedules** — `id`, `clip_id`, `platform`, `scheduled_at`, `timezone`, `status` (planned/posted/skipped), `posted_at`, `notes` — *separate table: one clip → many platforms/dates*
+- **clips** — `id`, `org_id`, `uploaded_by`, `title`, `r2_key`, `file_size`, `duration_s`, `width`, `height`, `orientation` (vertical/horizontal/square), `content_hash`, `folder_id`, `thumb_key`, `captured_at`, `status`, `created_at`
+- **folders** — nestable, org-scoped library folders
+- **schedules** — `id`, `clip_id`, `platform`, `scheduled_at`, `timezone`, `status` (planned/posted/skipped), `posted_at`, `notes`, `notify_profile_id`, `notified_at` — *separate table: one clip → many platforms/dates*
 - **tags** + **clip_tags** — free-form labels with colors
 - **downloads** — `clip_id`, `profile_id`, `downloaded_at` — "has it been pulled/used?"
-- **devices** — `profile_id`, `apns_token` — for push
+- **devices** — `profile_id`, `apns_token`, `environment` — for push
 
-### Clip status lifecycle
+### Clip status = transfer state only
 
 ```
-Ingesting → Uploading → Ready → Scheduled → Downloaded → Posted
+Ingesting → Uploading → Ready
+                 ↘ Failed (dead transfer; re-upload replaces it)
 ```
 
-Tags and the "used" flag are orthogonal — a clip can be `Posted` and tagged "evergreen".
+Whether a clip is *scheduled / downloaded / posted* is *derived* from the
+`schedules` and `downloads` tables — one clip can have many schedules, so a
+clip-level "posted" flag would be ambiguous. `clips.status` answers exactly one
+question: are the bytes in R2?
+
+Upload durability: files are staged in an app-container directory and tracked
+in a persistent registry (`PendingUploadStore`); `UploadReconciler` is the one
+place that turns background-upload outcomes into status writes, and its launch
+sweep marks device-owned uploads with no surviving task as `failed` and cleans
+orphaned staged files. Tags and the "used" flag are orthogonal — a clip can be
+posted and tagged "evergreen".
 
 ## Key flows
 
-- **Upload:** macOS requests presigned `PUT` from an Edge Function → uploads directly to R2 (background URLSession) → confirms → server writes the `clips` row.
+- **Upload:** the app stages a copy of the picked file, dedupes by content hash
+  (a `failed` twin is replaced; a live one is rejected), creates the `clips` row,
+  requests a presigned `PUT` from the `r2-sign` Edge Function, and uploads
+  directly to R2 on a background URLSession. `UploadReconciler` resolves the row
+  to `ready`/`failed` — including transfers that finish while the app is dead.
 - **Download:** client requests presigned `GET` (short TTL) → pulls from R2 → logs a `downloads` row.
-- **Live sync:** both apps subscribe to Realtime on `clips`/`schedules` for their org.
-- **Scheduled push:** `pg_cron` runs each minute → finds `schedules` due in ~15 min and not yet notified → Edge Function signs an APNs JWT (`.p8`) and pushes to the org's devices with a deep link → marks notified.
+- **Delete:** one server-side call (`r2-sign` delete) removes the R2 objects and
+  then the row, in that order, so a half-failed delete never orphans bytes.
+- **Live sync:** both apps subscribe to Realtime on `clips`/`schedules`
+  (`RealtimeSync` in the core); a change made on one device reloads the other.
+- **Scheduled push:** `pg_cron` runs each minute → Edge Function finds `planned`
+  schedules due within the lead window (default 15 min, `NOTIFY_LEAD_SECONDS`),
+  skips anything more than 24 h stale, signs an APNs JWT (`.p8`) and pushes to
+  the notify-target's devices with a deep link → stamps `notified_at`.
 
 ## Clients
 
 ### macOS
-- **Folder watcher:** FSEvents; debounce until the file stops growing, then hash + read metadata via AVFoundation (duration, dimensions → orientation) + thumbnail, then background upload.
+- **Upload view:** drag-and-drop / file picker → editable draft (metadata via
+  AVFoundation, streaming SHA-256, poster) → background upload. (The FSEvents
+  folder watcher from the original plan is shelved but kept in the core.)
 - **Library view:** thumbnail grid; filter by status/platform/tag/orientation.
 - **Scheduling view:** month/week calendar with clips on dates; inspector for platform, date/time, tags, status.
 

@@ -72,6 +72,7 @@ private struct MainView: View {
             detail
                 .frame(minWidth: 560, minHeight: 480)
         }
+        .onDisappear { model.tearDown() }
     }
 
     @ViewBuilder

@@ -8,14 +8,16 @@ public enum UserRole: String, Codable, Sendable, CaseIterable {
     case viewer
 }
 
-/// The lifecycle state of a clip. Mirrors the `clip_status` Postgres enum.
+/// The transfer state of a clip's bytes. Mirrors the `clip_status` Postgres enum.
+///
+/// Deliberately transfer-only: whether a clip is scheduled, downloaded, or
+/// posted is derived from the `schedules`/`downloads` tables, since one clip
+/// can have many schedules.
 public enum ClipStatus: String, Codable, Sendable, CaseIterable {
     case ingesting
     case uploading
     case ready
-    case scheduled
-    case downloaded
-    case posted
+    case failed
 }
 
 /// Video aspect orientation, auto-detected on ingest. Mirrors `clip_orientation`.
