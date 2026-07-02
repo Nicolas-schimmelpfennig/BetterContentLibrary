@@ -27,22 +27,14 @@ struct LibraryScreen: View {
     @State private var pendingClipDeletion: [Clip] = []
     @State private var isConfirmingClipDelete = false
     @State private var pendingFolderDeletion: Folder?
-    /// Active status filter chip; nil = browse folders ("All").
-    @State private var statusFilter: ClipDisplayStatus?
 
     private var library: LibraryModel { model.library }
     private var layout: LibraryLayout { LibraryLayout(rawValue: layoutRaw) ?? .grid }
     private var sortKey: LibrarySortKey { LibrarySortKey(rawValue: sortKeyRaw) ?? .dateAdded }
 
     /// Folders first (sorted among themselves), then clips — like the Mac app.
-    /// An active status chip switches to a flat, org-wide filtered list.
     private var entries: [LibraryEntry] {
         let comparator = sortKey.comparator(order: sortAscending ? .forward : .reverse)
-        if let statusFilter {
-            return library.clips(withDisplayStatus: statusFilter)
-                .map(LibraryEntry.clip)
-                .sorted(using: comparator)
-        }
         let folders = library.subfolders.map(LibraryEntry.folder).sorted(using: comparator)
         let clips = library.items.map(LibraryEntry.clip).sorted(using: comparator)
         return folders + clips
@@ -51,11 +43,10 @@ struct LibraryScreen: View {
     var body: some View {
         NavigationStack {
             content
-                .background(BCLTheme.well)
                 .navigationTitle(library.currentFolder?.name ?? "Library")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar { toolbar }
-                .safeAreaInset(edge: .top, spacing: 0) { topBar }
+                .safeAreaInset(edge: .top, spacing: 0) { breadcrumbBar }
                 .task { await library.load() }
                 .onChange(of: library.items) { Task { await model.backfillMissingThumbnails() } }
                 .refreshable { await library.load() }
@@ -113,7 +104,7 @@ struct LibraryScreen: View {
     private var gridView: some View {
         ScrollView {
             LazyVGrid(
-                columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 2),
+                columns: [GridItem(.adaptive(minimum: 150, maximum: 240), spacing: 12)],
                 spacing: 16
             ) {
                 ForEach(entries) { entry in
@@ -203,61 +194,7 @@ struct LibraryScreen: View {
         }
     }
 
-    // MARK: Top bar (status filter chips + breadcrumb)
-
-    private var topBar: some View {
-        VStack(spacing: 0) {
-            filterChips
-            if statusFilter == nil {
-                breadcrumbBar
-            }
-        }
-        .background(.bar)
-        .overlay(alignment: .bottom) { Divider() }
-    }
-
-    /// Status filter chips (design 1l) — the phone's replacement for the
-    /// desktop sidebar's Pipeline lists.
-    private var filterChips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                chip(nil, label: "All")
-                chip(.ready, label: "Ready")
-                chip(.scheduled, label: "Scheduled")
-                chip(.posted, label: "Posted")
-                chip(.uploading, label: "Uploading")
-                chip(.failed, label: "Failed")
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-        }
-    }
-
-    private func chip(_ status: ClipDisplayStatus?, label: String) -> some View {
-        let isActive = statusFilter == status
-        let count = status.map { library.clips(withDisplayStatus: $0).count }
-        return Button {
-            statusFilter = status
-        } label: {
-            HStack(spacing: 5) {
-                if let status { StatusDot(status, size: 6) }
-                Text(label)
-                    .font(.system(size: 12, weight: .semibold))
-                if let count, count > 0 {
-                    Text("\(count)")
-                        .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(isActive ? BCLTheme.textPrimary : BCLTheme.textTertiary)
-                }
-            }
-            .foregroundStyle(isActive ? BCLTheme.textPrimary : BCLTheme.textSecondary)
-            .padding(.horizontal, 11)
-            .frame(height: 28)
-            .background(isActive ? BCLTheme.control : BCLTheme.content, in: Capsule())
-            .overlay(Capsule().strokeBorder(isActive ? BCLTheme.border : BCLTheme.hairline, lineWidth: 1))
-        }
-        .buttonStyle(.plain)
-        .opacity(status.map { library.clips(withDisplayStatus: $0).isEmpty && !isActive ? 0.45 : 1 } ?? 1)
-    }
+    // MARK: Breadcrumb
 
     private var breadcrumbBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -273,6 +210,8 @@ struct LibraryScreen: View {
             .padding(.horizontal, 12)
             .frame(height: 32)
         }
+        .background(.bar)
+        .overlay(alignment: .bottom) { Divider() }
     }
 
     private func crumb(title: String, folder: Folder?) -> some View {
@@ -409,88 +348,56 @@ private struct LibraryGridCell: View {
     let entry: LibraryEntry
     let model: AppModel
 
-    private var displayStatus: ClipDisplayStatus? {
-        entry.clip.map { model.library.displayStatus(for: $0) }
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            well
-                // Same card anatomy as macOS: uniform ~1:1.06 well, thumbnail
-                // letterboxed at its true aspect inside.
-                .aspectRatio(1.0 / 1.06, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: BCLTheme.radiusCard))
-                .overlay(alignment: .topLeading) { statusBadge }
+            thumbnail
+                .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
                 .overlay(alignment: .bottomTrailing) { durationBadge }
+                .overlay(alignment: .bottom) { progressBar }
                 .overlay { regenOverlay }
-                .overlay {
-                    RoundedRectangle(cornerRadius: BCLTheme.radiusCard)
-                        .strokeBorder(BCLTheme.hairline, lineWidth: 1)
-                }
             nameRow
         }
     }
 
     @ViewBuilder
-    private var well: some View {
+    private var thumbnail: some View {
         switch entry {
         case .folder:
             ZStack {
-                RoundedRectangle(cornerRadius: BCLTheme.radiusCard).fill(BCLTheme.raised)
-                Image(systemName: "folder.fill")
-                    .font(.system(size: 40, weight: .light))
-                    .foregroundStyle(BCLTheme.textPrimary.opacity(0.35))
+                RoundedRectangle(cornerRadius: 8).fill(.quaternary)
+                Image(systemName: "folder.fill").font(.system(size: 40)).foregroundStyle(.tint)
             }
         case .clip(let clip):
-            ZStack {
-                RoundedRectangle(cornerRadius: BCLTheme.radiusCard).fill(BCLTheme.well)
-                ClipThumbnailView(clip: clip, loader: model.thumbnails, skim: model.skim, skimEnabled: clip.isPlayable)
-                    .padding(8)
-                    .opacity(displayStatus == .uploading || displayStatus == .ingesting ? 0.55 : 1)
-            }
+            ClipThumbnailView(clip: clip, loader: model.thumbnails, skim: model.skim, skimEnabled: clip.isPlayable)
+                .opacity(clip.isPlayable ? 1 : 0.5)
         }
     }
 
     private var nameRow: some View {
-        Text(entry.name)
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(BCLTheme.textPrimary)
-            .lineLimit(1)
-            .truncationMode(.middle)
-            .padding(.horizontal, 2)
-    }
-
-    @ViewBuilder
-    private var statusBadge: some View {
-        if let displayStatus {
-            Group {
-                if displayStatus == .uploading, let progress = entry.clip.flatMap({ model.uploadProgress[$0.id] }) {
-                    HStack(spacing: 5) {
-                        UploadRing(fraction: progress, size: 11)
-                        Text("\(Int(progress * 100))%")
-                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    }
-                    .foregroundStyle(BCLTheme.accent)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(BCLTheme.accent.opacity(0.14), in: Capsule())
-                } else {
-                    StatusChip(displayStatus, compact: true)
-                }
-            }
-            .padding(6)
+        HStack(spacing: 5) {
+            if let clip = entry.clip { StatusDot(status: clip.status) }
+            Text(entry.name).font(.callout).lineLimit(1).truncationMode(.middle)
         }
+        .padding(.horizontal, 2)
     }
 
     @ViewBuilder
     private var durationBadge: some View {
         if let duration = entry.clip?.durationFormatted {
             Text(duration)
-                .font(.system(size: 10, design: .monospaced))
+                .font(.caption2.monospacedDigit())
                 .padding(.horizontal, 5).padding(.vertical, 2)
-                .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: BCLTheme.radiusBadge))
+                .background(.black.opacity(0.65), in: RoundedRectangle(cornerRadius: 4))
                 .foregroundStyle(.white)
-                .padding(6)
+                .padding(5)
+        }
+    }
+
+    @ViewBuilder
+    private var progressBar: some View {
+        if let clip = entry.clip, let progress = model.uploadProgress[clip.id] {
+            ProgressView(value: progress).padding(.horizontal, 8).padding(.bottom, 8)
         }
     }
 
@@ -501,7 +408,7 @@ private struct LibraryGridCell: View {
                 Color.black.opacity(0.4)
                 ProgressView().controlSize(.small).tint(.white)
             }
-            .clipShape(RoundedRectangle(cornerRadius: BCLTheme.radiusCard))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
         }
     }
 }
@@ -555,3 +462,21 @@ private struct LibraryRow: View {
     }
 }
 
+// MARK: - Status dot
+
+private struct StatusDot: View {
+    let status: ClipStatus
+
+    var body: some View {
+        Circle().fill(color).frame(width: 7, height: 7)
+    }
+
+    private var color: Color {
+        switch status {
+        case .ingesting: return .orange
+        case .uploading: return .blue
+        case .ready: return .green
+        case .failed: return .red
+        }
+    }
+}

@@ -45,65 +45,46 @@ struct UploadScreen: View {
             VStack(spacing: 24) {
                 Spacer()
 
-                Image(systemName: isPreparing ? "hourglass" : "tray.and.arrow.up")
-                    .font(.system(size: 48, weight: .light))
-                    .foregroundStyle(isPreparing ? BCLTheme.accent : BCLTheme.textPrimary.opacity(0.4))
+                Image(systemName: isPreparing ? "hourglass" : "square.and.arrow.up.on.square")
+                    .font(.system(size: 56))
+                    .foregroundStyle(.tint)
                     .symbolEffect(.pulse, isActive: isPreparing)
 
-                VStack(spacing: 5) {
-                    Text(isPreparing ? "Reading video…" : "Add a video")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(BCLTheme.textPrimary)
-                    Text("Upload from your photo library or Files.")
-                        .font(.system(size: 13))
-                        .foregroundStyle(BCLTheme.textSecondary)
-                        .multilineTextAlignment(.center)
-                }
+                Text(isPreparing ? "Reading video…" : "Add a video")
+                    .font(.title2.weight(.medium))
+                Text("Upload from your photo library or Files.")
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
 
-                VStack(spacing: 10) {
+                VStack(spacing: 12) {
                     PhotosPicker(selection: $photoItems, matching: .videos, photoLibrary: .shared()) {
                         Label("Photo Library", systemImage: "photo.on.rectangle")
-                            .font(.system(size: 14.5, weight: .semibold))
-                            .foregroundStyle(.white)
                             .frame(maxWidth: .infinity)
-                            .frame(height: 46)
-                            .background(BCLTheme.accent, in: RoundedRectangle(cornerRadius: 11))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.borderedProminent)
 
                     Button {
                         isChoosingFile = true
                     } label: {
                         Label("Files", systemImage: "folder")
-                            .font(.system(size: 14.5, weight: .semibold))
-                            .foregroundStyle(BCLTheme.textPrimary)
                             .frame(maxWidth: .infinity)
-                            .frame(height: 46)
-                            .background(BCLTheme.content, in: RoundedRectangle(cornerRadius: 11))
-                            .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(BCLTheme.border, lineWidth: 1))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.bordered)
                 }
+                .controlSize(.large)
                 .disabled(isPreparing)
                 .padding(.horizontal, 40)
 
                 if let errorMessage {
                     Text(errorMessage)
                         .font(.callout)
-                        .foregroundStyle(BCLTheme.errorText)
+                        .foregroundStyle(.red)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal)
                 }
 
                 Spacer()
-
-                Text("Most uploads happen on the Mac — this is the on-the-go fallback.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(BCLTheme.textPrimary.opacity(0.3))
-                    .padding(.bottom, 12)
             }
-            .frame(maxWidth: .infinity)
-            .background(BCLTheme.well)
             .navigationTitle("Upload")
             .fileImporter(
                 isPresented: $isChoosingFile,
@@ -177,10 +158,10 @@ struct UploadScreen: View {
 
 // MARK: - Draft review sheet
 
-/// Compact confirm (design 1n): thumbnail + editable title; the auto-extracted
-/// metadata rides along read-only in mono.
 private struct DraftSheet: View {
     @State private var title: String
+    @State private var orientation: ClipOrientation
+    @State private var capturedAt: Date
 
     private let draft: ClipDraft
     private let onUpload: (ClipDraft) -> Void
@@ -191,32 +172,39 @@ private struct DraftSheet: View {
         self.onUpload = onUpload
         self.onCancel = onCancel
         _title = State(initialValue: draft.title)
+        _orientation = State(initialValue: draft.orientation)
+        _capturedAt = State(initialValue: draft.capturedAt ?? Date())
     }
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 16) {
-                poster
-                    .frame(height: 220)
-                    .frame(maxWidth: .infinity)
+            Form {
+                Section {
+                    poster
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 180)
+                        .listRowInsets(EdgeInsets())
+                }
 
-                TextField("Title", text: $title)
-                    .font(.system(size: 15))
-                    .foregroundStyle(BCLTheme.textPrimary)
-                    .padding(.horizontal, 14)
-                    .frame(height: 44)
-                    .background(BCLTheme.content, in: RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(BCLTheme.border, lineWidth: 1))
+                Section {
+                    TextField("Title", text: $title)
+                    Picker("Orientation", selection: $orientation) {
+                        ForEach(ClipOrientation.allCases, id: \.self) { o in
+                            Text(o.rawValue.capitalized).tag(o)
+                        }
+                    }
+                    DatePicker("Creation date", selection: $capturedAt, displayedComponents: [.date, .hourAndMinute])
+                }
 
-                Text(meta)
-                    .font(.system(size: 11.5, design: .monospaced))
-                    .foregroundStyle(BCLTheme.textSecondary)
-
-                Spacer()
+                Section {
+                    LabeledContent("Duration", value: Self.durationText(draft.durationS))
+                    LabeledContent("Dimensions", value: "\(draft.width) × \(draft.height)")
+                    if let size = draft.fileSize {
+                        LabeledContent("Size", value: ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
+                    }
+                }
             }
-            .padding(16)
-            .background(BCLTheme.well)
-            .navigationTitle("New Clip")
+            .navigationTitle("Add Video")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -226,37 +214,32 @@ private struct DraftSheet: View {
                     Button("Upload") {
                         var edited = draft
                         edited.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+                        edited.orientation = orientation
+                        edited.capturedAt = capturedAt
                         onUpload(edited)
                     }
                     .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
         }
-        .preferredColorScheme(.dark)
     }
 
-    private var meta: String {
-        var parts = [BCLFormat.duration(draft.durationS), "\(draft.width)×\(draft.height)"]
-        if let size = draft.fileSize { parts.append(BCLFormat.fileSize(size)) }
-        parts.append(draft.orientation.rawValue.capitalized)
-        return parts.joined(separator: " · ")
-    }
-
+    @ViewBuilder
     private var poster: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: BCLTheme.radiusSheet).fill(BCLTheme.content)
-            if let data = draft.thumbnailJPEG, let image = UIImage(data: data) {
-                Image(uiImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .clipShape(RoundedRectangle(cornerRadius: BCLTheme.radiusCard))
-                    .padding(8)
-            } else {
-                Image(systemName: "film")
-                    .font(.largeTitle)
-                    .foregroundStyle(BCLTheme.textTertiary)
+        if let data = draft.thumbnailJPEG, let image = UIImage(data: data) {
+            Image(uiImage: image)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+        } else {
+            ZStack {
+                Rectangle().fill(.quaternary)
+                Image(systemName: "film").font(.largeTitle).foregroundStyle(.secondary)
             }
         }
-        .overlay(RoundedRectangle(cornerRadius: BCLTheme.radiusSheet).strokeBorder(BCLTheme.hairline, lineWidth: 1))
+    }
+
+    private static func durationText(_ seconds: Double) -> String {
+        let total = Int(seconds.rounded())
+        return String(format: "%d:%02d", total / 60, total % 60)
     }
 }

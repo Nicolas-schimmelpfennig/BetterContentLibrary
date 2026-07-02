@@ -17,8 +17,6 @@ struct BetterContentLibraryiOSApp: App {
             RootView()
                 .environment(auth)
                 .task { await auth.start() }
-                .preferredColorScheme(.dark)   // dark-first product; light ships later
-                .tint(BCLTheme.accent)
         }
     }
 }

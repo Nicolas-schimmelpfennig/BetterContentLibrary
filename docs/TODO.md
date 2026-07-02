@@ -109,23 +109,13 @@ Watch-folder shelved for now (core `FolderWatcher`/`IngestCoordinator` kept, app
 - [x] APNs setup complete — `.p8` created (now stored at `~/Secrets/BetterContentLibrary/`, contents in the `APNS_PRIVATE_KEY` edge secret), cron authed via Vault `cron_secret`; end-to-end push confirmed working.
 - [ ] Notification → download deep-link handling (currently opens the post card; download is one more tap)
 
-## Phase 4.5 — Design implementation (2026-07-02, from the "BetterContentLibrary UI" claude.ai/design project)
-Phase 1 = restyle over existing functionality, dark-only. Done:
-- [x] **Design system in core** (`Design/Theme.swift`, `Design/Components.swift`) — BCLTheme surfaces/text/hairlines/radii, one blue accent (#4E9CF7), status lifecycle colors, platform monograms + brand colors, `BrandMark`, `StatusChip`/`StatusDot`, `PlatformBadge`, `UploadRing`, `BCLFormat` mono formatters
-- [x] **Derived display status** — `ClipDisplayStatus.derive(clip:schedules:)`: transfer states win; ready + planned schedule → Scheduled; posted-everywhere → Posted. `LibraryModel` loads org-wide clips + schedules to power it
-- [x] **macOS** — login splash w/ brand block; custom sidebar (main sections, PIPELINE smart filters w/ live counts → flat filtered library, root folders, account footer); Upload drop-zone states + recent imports + New Clip draft sheet; Library card anatomy (uniform 1:1.06 wells, letterboxed thumbs, status chip top-left, mono duration, uploading ring+dim, selection ring+check); ghost-cell empty state; Schedule chips (3px status border, monogram, mono time, "+N more" popover, Mark as Posted/Skip context menu); Add Schedule sheet (platform chip row w/ brand-color selection, caption w/ platform-aware char count, notes)
-- [x] **iOS** — login brand block (44pt controls); Library status filter chips (org-wide flat filter) + 2-up design cards; Schedule = Up-next card (due <24h, deep-links Day detail) + dot calendar + pinned day agenda; Day detail = urgency-sorted cards w/ amber due header, caption Copy, Save to Photos + "Posted ✓"; compact upload confirm; Settings w/ notification-permission row
-- [x] **Captions** — migration 0012 `schedules.caption`; add-schedule sheets on both platforms; Copy on Day detail. `schedules.status` writers added (markPosted w/ posted_at, skip)
-
-### Phase 2 backlog (design features not yet built)
-- [ ] Tags (schema exists): sidebar tag list, tag pills on draft sheet/cards, filters
-- [ ] Watched folder revival (design 1c/1f/1j hero) — stage via PendingUploadStore
-- [ ] Schedule: unscheduled-tray side panel + drag-clip-onto-day; ⌥-drag duplicate chip; week view
-- [ ] macOS preview window inspector (1g): schedules list + download audit trail (needs `downloads` writes on save)
-- [ ] iOS: search, Face ID login, upload retry rows, "Open Instagram" post-save action
-- [ ] Push: thumbnail attachment (needs a Notification Service Extension) + Save/Posted actions (categories)
-- [ ] Light mode (tokens documented in design 1a)
-- [ ] macOS list view restyle (NSTableView: dot+word status, mono columns, "Scheduled ×2" counts)
+## Phase 4.5 — Design experiment & revert (2026-07-02)
+The custom BCL design system (from the "BetterContentLibrary UI" claude.ai/design project) was implemented across both apps, then **reverted by decision: the app should look as macOS/iOS-native as possible** (system colors, standard controls, follows light/dark). What survived the revert:
+- [x] **iOS Schedule tab kept** (the one screen Nicolas liked): Up-next card (due <24 h, deep-links Day detail), dot calendar with status dots, pinned day agenda with Mark as Posted / Skip context menu — re-styled with system semantic colors so it adapts natively
+- [x] **Captions** — migration 0012 `schedules.caption`; iOS add-schedule sheet (platform chip grid + caption w/ platform-aware char count); native caption row with Copy on Day detail. `schedules.status` writers (markPosted w/ posted_at, skip) live in `ScheduleModel`
+- [x] Core `Design/Theme.swift` + `Design/Components.swift` remain in the package (Platform displayName/brandColor/monogram + `PlatformBadge` are used by the kept schedule screen; `ClipDisplayStatus.derive` available for future derived-status UI) — but **app chrome must stay native; don't reintroduce BCLTheme-styled screens**
+- [ ] macOS add-schedule sheet: caption field (iOS has it; Mac sheet reverted to the pre-design version without it)
+- [ ] Derived status badges (scheduled/posted) in the libraries, using native styling
 
 ## Phase 5 — Productize (later)
 - [ ] Onboarding / org invites

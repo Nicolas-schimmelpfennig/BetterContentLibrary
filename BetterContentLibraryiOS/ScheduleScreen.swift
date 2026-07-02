@@ -2,10 +2,10 @@
 //  ScheduleScreen.swift
 //  BetterContentLibrary (iOS)
 //
-//  Month calendar (design 1o): an "Up next" card answers "what do I post
-//  next?" before any tapping; day cells carry status dots; the selected day's
-//  agenda stays pinned below the grid. Tapping an agenda row (or the up-next
-//  card) opens Day detail.
+//  Month calendar: an "Up next" card answers "what do I post next?" before any
+//  tapping; day cells carry status dots; the selected day's agenda stays pinned
+//  below the grid. Tapping an agenda row (or the up-next card) opens Day detail.
+//  Styled with system semantic colors so it follows light/dark natively.
 //
 
 import SwiftUI
@@ -33,7 +33,7 @@ struct ScheduleScreen: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
             }
-            .background(BCLTheme.well)
+            .background(Color(.systemGroupedBackground))
             .navigationTitle(schedule.monthTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -82,37 +82,31 @@ struct ScheduleScreen: View {
                     thumbWell(for: schedule.clip(for: next))
                     VStack(alignment: .leading, spacing: 3) {
                         Text("UP NEXT · \(relative(next.scheduledAt))")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.caption2.weight(.bold))
                             .kerning(0.6)
-                            .foregroundStyle(BCLTheme.accentText)
+                            .foregroundStyle(.tint)
                         Text(schedule.clip(for: next)?.title ?? "Clip")
-                            .font(.system(size: 12.5, weight: .semibold))
-                            .foregroundStyle(BCLTheme.textPrimary)
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.primary)
                             .lineLimit(1)
                         HStack(spacing: 5) {
                             PlatformBadge(next.platform, size: 13)
                             Text(next.scheduledAt.formatted(.dateTime.hour().minute()))
-                                .font(.system(size: 10, design: .monospaced))
-                                .foregroundStyle(BCLTheme.textPrimary.opacity(0.6))
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
                         }
                     }
                     Spacer()
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(BCLTheme.accentText)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.tint)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
-                .background(
-                    LinearGradient(
-                        colors: [BCLTheme.accent.opacity(0.16), BCLTheme.accent.opacity(0.06)],
-                        startPoint: .topLeading, endPoint: .bottomTrailing
-                    ),
-                    in: RoundedRectangle(cornerRadius: BCLTheme.radiusSheet)
-                )
+                .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
                 .overlay(
-                    RoundedRectangle(cornerRadius: BCLTheme.radiusSheet)
-                        .strokeBorder(BCLTheme.accent.opacity(0.35), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(Color.accentColor.opacity(0.35), lineWidth: 1)
                 )
             }
             .buttonStyle(.plain)
@@ -144,8 +138,8 @@ struct ScheduleScreen: View {
             HStack(spacing: 2) {
                 ForEach(schedule.weekdaySymbols, id: \.self) { symbol in
                     Text(String(symbol.prefix(1)).uppercased())
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(BCLTheme.textPrimary.opacity(0.35))
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.tertiary)
                         .frame(maxWidth: .infinity)
                 }
             }
@@ -156,8 +150,7 @@ struct ScheduleScreen: View {
             }
         }
         .padding(10)
-        .background(BCLTheme.content, in: RoundedRectangle(cornerRadius: BCLTheme.radiusSheet))
-        .overlay(RoundedRectangle(cornerRadius: BCLTheme.radiusSheet).strokeBorder(BCLTheme.hairline, lineWidth: 1))
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
     }
 
     private func dayCell(_ day: Date) -> some View {
@@ -172,21 +165,21 @@ struct ScheduleScreen: View {
         } label: {
             VStack(spacing: 2) {
                 Text(day.formatted(.dateTime.day()))
-                    .font(.system(size: 12, weight: isToday ? .bold : .medium))
+                    .font(.footnote.weight(isToday ? .bold : .medium))
                     .foregroundStyle(
-                        isToday ? .white
-                        : isSelected ? BCLTheme.accentText
-                        : inMonth ? BCLTheme.textPrimary.opacity(0.75)
-                        : BCLTheme.textPrimary.opacity(0.25)
+                        isToday ? Color.white
+                        : isSelected ? Color.accentColor
+                        : inMonth ? Color.primary
+                        : Color.secondary.opacity(0.5)
                     )
                     .frame(width: 24, height: 24)
                     .background {
                         if isToday {
-                            Circle().fill(BCLTheme.accent)
+                            Circle().fill(Color.accentColor)
                         } else if isSelected {
                             Circle()
-                                .fill(BCLTheme.accent.opacity(0.2))
-                                .overlay(Circle().strokeBorder(BCLTheme.accent, lineWidth: 1.5))
+                                .fill(Color.accentColor.opacity(0.15))
+                                .overlay(Circle().strokeBorder(Color.accentColor, lineWidth: 1.5))
                         }
                     }
                 HStack(spacing: 2) {
@@ -217,27 +210,23 @@ struct ScheduleScreen: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text(selectedDay.formatted(.dateTime.weekday(.wide).month().day()))
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(BCLTheme.textPrimary)
+                    .font(.subheadline.weight(.semibold))
                 Spacer()
                 Button {
                     addDay = DaySelection(date: selectedDay)
                 } label: {
                     Image(systemName: "plus")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(BCLTheme.textSecondary)
-                        .frame(width: 26, height: 26)
-                        .background(BCLTheme.content, in: Circle())
-                        .overlay(Circle().strokeBorder(BCLTheme.hairline, lineWidth: 1))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.circle)
+                .controlSize(.small)
             }
 
             let daySchedules = schedule.schedules(on: selectedDay)
             if daySchedules.isEmpty {
                 Text("Nothing scheduled")
-                    .font(.system(size: 12))
-                    .foregroundStyle(BCLTheme.textTertiary)
+                    .font(.footnote)
+                    .foregroundStyle(.tertiary)
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, 18)
             } else {
@@ -267,37 +256,34 @@ struct ScheduleScreen: View {
         .padding(.bottom, 16)
     }
 
-    /// Same chip anatomy as macOS: 3px status border, monogram, title, mono time.
+    /// Agenda row: 3px schedule-status border, platform monogram, title, time.
     private func agendaRow(_ sched: Schedule) -> some View {
         HStack(spacing: 8) {
             PlatformBadge(sched.platform, size: 16)
             Text(schedule.clip(for: sched)?.title ?? "Clip")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(sched.status == .skipped ? BCLTheme.textTertiary : BCLTheme.textPrimary)
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(sched.status == .skipped ? Color.secondary : Color.primary)
                 .strikethrough(sched.status == .skipped)
                 .lineLimit(1)
             Spacer()
             Text(sched.scheduledAt.formatted(.dateTime.hour().minute()))
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(BCLTheme.textLabel)
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
         }
         .padding(.leading, 10)
         .padding(.trailing, 12)
         .frame(height: 44)
         .frame(maxWidth: .infinity)
-        .background(BCLTheme.content, in: RoundedRectangle(cornerRadius: BCLTheme.radiusCard))
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 8))
         .overlay(alignment: .leading) {
-            UnevenRoundedRectangle(
-                cornerRadii: .init(topLeading: BCLTheme.radiusCard, bottomLeading: BCLTheme.radiusCard)
-            )
-            .fill(sched.status.color)
-            .frame(width: 3)
+            UnevenRoundedRectangle(cornerRadii: .init(topLeading: 8, bottomLeading: 8))
+                .fill(sched.status.color)
+                .frame(width: 3)
         }
-        .overlay(RoundedRectangle(cornerRadius: BCLTheme.radiusCard).strokeBorder(BCLTheme.hairline, lineWidth: 1))
     }
 }
 
-// MARK: - Add Schedule sheet (design 1s)
+// MARK: - Add Schedule sheet
 
 struct AddScheduleSheet: View {
     let day: Date
@@ -364,9 +350,9 @@ struct AddScheduleSheet: View {
                             TextField("Caption — the post text", text: $caption, axis: .vertical)
                                 .lineLimit(3...8)
                         } footer: {
-                            Text("\(caption.count)/\(captionLimit) · copied at post time from Day detail")
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundStyle(caption.count > captionLimit ? BCLTheme.errorText : BCLTheme.textTertiary)
+                            Text("\(caption.count)/\(captionLimit) · copied at post time from the day's card")
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(caption.count > captionLimit ? .red : .secondary)
                         }
                     }
                 }
@@ -396,11 +382,9 @@ struct AddScheduleSheet: View {
                 }
             }
         }
-        .preferredColorScheme(.dark)
     }
 
-    /// Equal-width platform chips; selection gets the 2px brand-color border —
-    /// the one place platform color gets loud.
+    /// Equal-width platform chips; selection gets the 2px brand-color border.
     private var platformChips: some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 6) {
             ForEach(Platform.allCases, id: \.self) { p in
@@ -411,16 +395,16 @@ struct AddScheduleSheet: View {
                         PlatformBadge(p, size: 18)
                         Text(p.displayName)
                             .font(.system(size: 9.5, weight: .semibold))
-                            .foregroundStyle(BCLTheme.textPrimary)
+                            .foregroundStyle(.primary)
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
                     }
                     .frame(maxWidth: .infinity)
                     .frame(height: 48)
-                    .background(BCLTheme.content, in: RoundedRectangle(cornerRadius: BCLTheme.radiusControl))
+                    .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 8))
                     .overlay(
-                        RoundedRectangle(cornerRadius: BCLTheme.radiusControl)
-                            .strokeBorder(platform == p ? p.brandColor : BCLTheme.hairline, lineWidth: platform == p ? 2 : 1)
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(platform == p ? p.brandColor : Color.clear, lineWidth: 2)
                     )
                     .contentShape(Rectangle())
                 }
