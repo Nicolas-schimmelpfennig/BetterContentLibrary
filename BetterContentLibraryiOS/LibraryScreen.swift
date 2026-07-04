@@ -203,8 +203,7 @@ struct LibraryScreen: View {
                             Label {
                                 Text(status.label)
                             } icon: {
-                                Image(systemName: "circle.fill")
-                                    .foregroundStyle(status.color)
+                                Image.statusDot(status.color)
                             }
                             .tag(Optional(status))
                         }
@@ -271,9 +270,15 @@ struct LibraryScreen: View {
         case .clip(let clip):
             Button { previewClip = clip } label: { Label("Preview", systemImage: "play") }
                 .disabled(!clip.isPlayable)
-            if library.displayStatus(for: clip) == .scheduled {
+            let status = library.displayStatus(for: clip)
+            if status == .scheduled || status == .ready {
                 Button { Task { await model.markPosted([clip]) } } label: {
                     Label("Mark as Posted", systemImage: "checkmark.circle")
+                }
+            }
+            if status == .posted {
+                Button { Task { await model.reopen([clip]) } } label: {
+                    Label("Reopen", systemImage: "arrow.uturn.backward.circle")
                 }
             }
             Button { beginRename(entry) } label: { Label("Rename", systemImage: "pencil") }

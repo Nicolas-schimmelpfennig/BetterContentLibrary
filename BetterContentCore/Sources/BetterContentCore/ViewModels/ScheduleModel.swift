@@ -201,6 +201,32 @@ public final class ScheduleModel {
         }
     }
 
+    /// Marks a clip posted when it has no planned schedule to flip: creates a
+    /// minimal ad-hoc one ("Other" platform, right now) and marks it posted
+    /// in the same beat. Lets the library's "Mark as Posted" work on any
+    /// ready clip — not just ones already on the calendar — while keeping
+    /// "Posted" tied to a real schedule row instead of a free-floating flag.
+    public func markClipPostedAdHoc(clipId: UUID) async {
+        do {
+            let created = try await schedules.create(clipId: clipId, orgId: orgId, platform: .other, scheduledAt: Date())
+            try await schedules.markPosted(created.id)
+            await load()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Reverts a posted schedule back to planned — undoes an accidental
+    /// "Mark as Posted" without deleting the record.
+    public func reopen(_ id: UUID) async {
+        do {
+            try await schedules.setStatus(id, .planned)
+            await load()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     /// Skips a schedule without deleting it (gray, struck-through in chips).
     public func skip(_ id: UUID) async {
         do {

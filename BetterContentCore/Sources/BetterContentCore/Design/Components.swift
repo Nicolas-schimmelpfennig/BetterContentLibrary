@@ -1,4 +1,9 @@
 import SwiftUI
+#if canImport(AppKit)
+import AppKit
+#elseif canImport(UIKit)
+import UIKit
+#endif
 
 // Shared BCL components used by both apps — the pieces the design doc keeps
 // identical across macOS and iOS: brand mark, status chips/dots, platform
@@ -160,6 +165,38 @@ public struct UploadRing: View {
         }
         .frame(width: size, height: size)
         .animation(.linear(duration: 0.2), value: fraction)
+    }
+}
+
+// MARK: - Menu-safe status dot
+
+public extension Image {
+    /// A filled circle baked into a real bitmap and marked non-template, for
+    /// use as a `Label` icon inside a `Menu`/`Picker`. Plain
+    /// `Image(systemName: "circle.fill").foregroundStyle(color)` renders fine
+    /// in ordinary views, but both AppKit and UIKit re-tint menu item icons
+    /// to the menu's own text color by default — so any hue set via
+    /// `foregroundStyle` is silently dropped once the same icon sits inside a
+    /// menu. Baking the color into the pixels (and disabling template mode)
+    /// is what actually survives there.
+    static func statusDot(_ color: Color, diameter: CGFloat = 10) -> Image {
+        #if canImport(AppKit)
+        let size = NSSize(width: diameter, height: diameter)
+        let image = NSImage(size: size, flipped: false) { rect in
+            NSColor(color).setFill()
+            NSBezierPath(ovalIn: rect).fill()
+            return true
+        }
+        image.isTemplate = false
+        return Image(nsImage: image)
+        #elseif canImport(UIKit)
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: diameter, height: diameter))
+        let image = renderer.image { _ in
+            UIColor(color).setFill()
+            UIBezierPath(ovalIn: CGRect(x: 0, y: 0, width: diameter, height: diameter)).fill()
+        }
+        return Image(uiImage: image.withRenderingMode(.alwaysOriginal))
+        #endif
     }
 }
 

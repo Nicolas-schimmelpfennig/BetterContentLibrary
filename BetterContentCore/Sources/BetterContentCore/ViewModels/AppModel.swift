@@ -279,14 +279,31 @@ public final class AppModel {
         for clip in clips { await regenerateThumbnail(for: clip) }
     }
 
-    /// Marks every planned schedule of the given clips as posted — the
-    /// library-side "I published it" — then refreshes the library so the
-    /// clips' status tags flip to Posted. (The calendar reloads inside
-    /// `ScheduleModel.markPosted`.)
+    /// Marks the given clips posted — the library-side "I published it" —
+    /// then refreshes the library so their status tags flip to Posted. Works
+    /// on any ready clip, not just ones already on the calendar: a clip with
+    /// a planned schedule has it flipped to posted; one with none gets a
+    /// minimal ad-hoc schedule created and posted in the same beat, so
+    /// "Posted" always traces back to a real schedule row. (The calendar
+    /// reloads inside `ScheduleModel`.)
     public func markPosted(_ clips: [Clip]) async {
         for clip in clips {
             let planned = (library.schedulesByClip[clip.id] ?? []).filter { $0.status == .planned }
-            for item in planned { await schedule.markPosted(item.id) }
+            if planned.isEmpty {
+                await schedule.markClipPostedAdHoc(clipId: clip.id)
+            } else {
+                for item in planned { await schedule.markPosted(item.id) }
+            }
+        }
+        await library.load()
+    }
+
+    /// Reverts the given clips' posted schedules back to planned — the
+    /// library-side undo for an accidental "Mark as Posted".
+    public func reopen(_ clips: [Clip]) async {
+        for clip in clips {
+            let posted = (library.schedulesByClip[clip.id] ?? []).filter { $0.status == .posted }
+            for item in posted { await schedule.reopen(item.id) }
         }
         await library.load()
     }

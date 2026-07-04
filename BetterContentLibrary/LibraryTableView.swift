@@ -27,6 +27,7 @@ struct LibraryTableView: NSViewRepresentable {
     var onMove: ([String], UUID?) -> Void
     var onPreview: (Clip) -> Void
     var onMarkPosted: ([Clip]) -> Void
+    var onReopen: ([Clip]) -> Void
     var onRegenerate: ([Clip]) -> Void
     var onDeleteFolder: (Folder) -> Void
     var onDeleteClips: ([Clip]) -> Void
@@ -311,10 +312,18 @@ struct LibraryTableView: NSViewRepresentable {
             case .clip(let clip):
                 let targetClips = self.targetClips(clicked: clicked)
                 addItem(to: menu, "Preview", enabled: clip.isPlayable) { [weak self] in self?.parent.onPreview(clip) }
-                let postedTargets = targetClips.filter { parent.displayStatus($0) == .scheduled }
+                let postedTargets = targetClips.filter {
+                    let status = parent.displayStatus($0)
+                    return status == .scheduled || status == .ready
+                }
                 if !postedTargets.isEmpty {
                     let title = postedTargets.count > 1 ? "Mark \(postedTargets.count) as Posted" : "Mark as Posted"
                     addItem(to: menu, title) { [weak self] in self?.parent.onMarkPosted(postedTargets) }
+                }
+                let reopenTargets = targetClips.filter { parent.displayStatus($0) == .posted }
+                if !reopenTargets.isEmpty {
+                    let title = reopenTargets.count > 1 ? "Reopen \(reopenTargets.count) Clips" : "Reopen"
+                    addItem(to: menu, title) { [weak self] in self?.parent.onReopen(reopenTargets) }
                 }
                 addItem(to: menu, "Rename") { [weak self] in self?.beginRename(row: tableView.clickedRow) }
                 let regenTitle = targetClips.count > 1 ? "Regenerate \(targetClips.count) Thumbnails" : "Regenerate Thumbnail"

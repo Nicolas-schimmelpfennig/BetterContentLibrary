@@ -256,8 +256,7 @@ struct LibraryView: View {
                         Label {
                             Text(status.label)
                         } icon: {
-                            Image(systemName: "circle.fill")
-                                .foregroundStyle(status.color)
+                            Image.statusDot(status.color)
                         }
                         .tag(Optional(status))
                     }
@@ -459,6 +458,7 @@ struct LibraryView: View {
             onMove: moveDropped,
             onPreview: { previewClip = $0 },
             onMarkPosted: { clips in Task { await model.markPosted(clips) } },
+            onReopen: { clips in Task { await model.reopen(clips) } },
             onRegenerate: { clips in Task { await model.regenerateThumbnails(for: clips) } },
             onDeleteFolder: { folder in Task { await library.deleteFolder(folder) } },
             onDeleteClips: { clips in requestDelete(clips) }
@@ -535,6 +535,12 @@ struct LibraryView: View {
                     Task { await model.markPosted(postedTargets) }
                 }
             }
+            let clipsToReopen = reopenTargets(for: clip)
+            if !clipsToReopen.isEmpty {
+                Button(clipsToReopen.count > 1 ? "Reopen \(clipsToReopen.count) Clips" : "Reopen") {
+                    Task { await model.reopen(clipsToReopen) }
+                }
+            }
             Button("Rename") { beginRename(item) }
             Button(regenerateTitle) {
                 let clips = regenerateTargets(for: clip)
@@ -559,11 +565,23 @@ struct LibraryView: View {
     }
 
     /// Clips a "Mark as Posted" applies to: within the selection (if the
-    /// clicked clip is part of it), every clip that still has a planned
-    /// schedule; otherwise just the clicked clip when it qualifies.
+    /// clicked clip is part of it), every clip that's ready to post — either
+    /// already scheduled or just sitting Ready with nothing scheduled yet;
+    /// otherwise just the clicked clip when it qualifies.
     private func markPostedTargets(for clip: Clip) -> [Clip] {
         let base = selectedClips.contains(where: { $0.id == clip.id }) ? selectedClips : [clip]
-        return base.filter { library.displayStatus(for: $0) == .scheduled }
+        return base.filter {
+            let status = library.displayStatus(for: $0)
+            return status == .scheduled || status == .ready
+        }
+    }
+
+    /// Clips a "Reopen" applies to: within the selection (if the clicked clip
+    /// is part of it), every clip currently marked Posted; otherwise just the
+    /// clicked clip when it qualifies.
+    private func reopenTargets(for clip: Clip) -> [Clip] {
+        let base = selectedClips.contains(where: { $0.id == clip.id }) ? selectedClips : [clip]
+        return base.filter { library.displayStatus(for: $0) == .posted }
     }
 
     @ViewBuilder
