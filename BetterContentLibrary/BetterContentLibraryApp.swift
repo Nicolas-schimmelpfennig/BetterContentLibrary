@@ -38,9 +38,11 @@ struct BetterContentLibraryApp: App {
     }
 }
 
-/// View-menu commands to show/hide the two main panes. The shortcuts live
-/// here (not on the toolbar toggles) so the menu bar is their single owner;
-/// at least one pane always stays visible.
+/// View-menu commands to show/hide the two main panes; at least one always
+/// stays visible. Deliberately no key equivalents here: the shortcuts are
+/// bare letters (default L / S, editable in Settings), and a bare-letter menu
+/// equivalent would fire while typing in a text field — so the keys live in
+/// `PaneShortcutMonitor`, which checks the first responder before acting.
 private struct PaneCommands: Commands {
     @AppStorage(SettingsKey.showLibraryPane) private var showLibrary = true
     @AppStorage(SettingsKey.showSchedulePane) private var showSchedule = true
@@ -51,13 +53,11 @@ private struct PaneCommands: Commands {
                 showLibrary.toggle()
                 if !showLibrary && !showSchedule { showSchedule = true }
             }
-            .keyboardShortcut("l", modifiers: .command)
 
             Button(showSchedule ? "Hide Schedule" : "Show Schedule") {
                 showSchedule.toggle()
                 if !showSchedule && !showLibrary { showLibrary = true }
             }
-            .keyboardShortcut("s", modifiers: .command)
 
             Divider()
         }

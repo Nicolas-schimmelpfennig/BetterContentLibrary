@@ -25,15 +25,21 @@ struct SettingsView: View {
                     }
                     Section {
                         LabeledContent("Show or hide the Library pane") {
-                            Text("⌘L").monospaced().foregroundStyle(.secondary)
+                            ShortcutKeyField(
+                                storageKey: SettingsKey.libraryPaneShortcut, defaultKey: "l",
+                                otherKey: SettingsKey.schedulePaneShortcut, otherDefault: "s"
+                            )
                         }
                         LabeledContent("Show or hide the Schedule pane") {
-                            Text("⌘S").monospaced().foregroundStyle(.secondary)
+                            ShortcutKeyField(
+                                storageKey: SettingsKey.schedulePaneShortcut, defaultKey: "s",
+                                otherKey: SettingsKey.libraryPaneShortcut, otherDefault: "l"
+                            )
                         }
                     } header: {
                         Text("Keyboard Shortcuts")
                     } footer: {
-                        Text("Hiding one pane leaves the other full width; at least one stays visible. Also in the View menu.")
+                        Text("Single keys, active whenever you're not typing in a text field. Hiding one pane leaves the other full width; at least one stays visible. Also in the View menu.")
                     }
                 }
                 .formStyle(.grouped)
@@ -49,6 +55,45 @@ struct SettingsView: View {
                 .padding(.bottom, 8)
         }
         .frame(width: 460, height: 380)
+    }
+}
+
+/// A one-letter shortcut editor: type a letter or digit and it becomes the
+/// pane's toggle key immediately. Refuses the other pane's key so the two
+/// shortcuts can't collide.
+private struct ShortcutKeyField: View {
+    let storageKey: String
+    let defaultKey: String
+    let otherKey: String
+    let otherDefault: String
+
+    @State private var text = ""
+
+    var body: some View {
+        TextField("", text: $text)
+            .frame(width: 36)
+            .multilineTextAlignment(.center)
+            .monospaced()
+            .onAppear { text = stored.uppercased() }
+            .onChange(of: text) { _, new in
+                // Empty mid-edit (user hit delete) is fine; keep the stored
+                // key and restore the display on submit.
+                guard let char = new.reversed().first(where: { $0.isLetter || $0.isNumber }) else { return }
+                let key = String(char).lowercased()
+                let taken = UserDefaults.standard.string(forKey: otherKey) ?? otherDefault
+                if key == taken {
+                    text = stored.uppercased()
+                    return
+                }
+                UserDefaults.standard.set(key, forKey: storageKey)
+                let display = key.uppercased()
+                if new != display { text = display }
+            }
+            .onSubmit { text = stored.uppercased() }
+    }
+
+    private var stored: String {
+        UserDefaults.standard.string(forKey: storageKey) ?? defaultKey
     }
 }
 

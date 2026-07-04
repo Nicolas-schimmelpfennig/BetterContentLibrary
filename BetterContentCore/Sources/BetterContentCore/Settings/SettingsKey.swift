@@ -12,11 +12,18 @@ public enum SettingsKey {
     /// When false, library cards show only the static poster (no hover/drag scrub).
     public static let videoSkimming = "videoSkimmingEnabled"
 
-    /// Visibility of the two macOS main-window panes (⌘L / ⌘S). At least one
-    /// stays visible — the toggles re-show the other instead of blanking the
-    /// window.
+    /// Visibility of the two macOS main-window panes. At least one stays
+    /// visible — the toggles re-show the other instead of blanking the window.
     public static let showLibraryPane = "showLibraryPane"
     public static let showSchedulePane = "showSchedulePane"
+
+    /// Single bare keys that toggle the panes when no text field has focus
+    /// (macOS; defaults "l" / "s", editable in Settings → General).
+    public static let libraryPaneShortcut = "libraryPaneShortcut"
+    public static let schedulePaneShortcut = "schedulePaneShortcut"
+
+    /// The library pane's share of the split when both panes show (macOS).
+    public static let mainSplitFraction = "mainSplitFraction"
 
     /// Comma-joined raw values of platforms the user has hidden from the
     /// scheduling UI (Settings → Platforms). Stored as the *hidden* set so a

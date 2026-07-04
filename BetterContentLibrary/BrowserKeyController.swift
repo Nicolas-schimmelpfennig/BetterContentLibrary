@@ -40,6 +40,9 @@ final class BrowserKeyController: ObservableObject {
     /// Bumped on spacebar; the browser opens the primary selection's preview.
     @Published var spaceTick = 0
 
+    /// False while the library pane is hidden, so its monitor doesn't eat
+    /// space/arrows meant for whatever else is on screen.
+    var isEnabled = true
     /// True when the grid (thumbnail) view is showing, false for the list.
     var isGridMode = true
     /// True when the detail pane (items) is active rather than the sidebar.
@@ -66,6 +69,8 @@ final class BrowserKeyController: ObservableObject {
 
     /// Returns nil to consume the event, or the event to pass it through.
     private func handle(_ event: NSEvent) -> NSEvent? {
+        guard isEnabled else { return event }
+
         // Never hijack keys while editing text (e.g. a rename field).
         if let responder = NSApp.keyWindow?.firstResponder, responder is NSText {
             return event

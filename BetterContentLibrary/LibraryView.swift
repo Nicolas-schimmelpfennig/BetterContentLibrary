@@ -20,6 +20,7 @@ enum LibraryViewMode: String { case icon, list }
 /// `body` a single short expression the type-checker can handle quickly).
 private struct BrowserKeyWiring: ViewModifier {
     let controller: BrowserKeyController
+    let isActive: Bool
     let isGrid: Bool
     let isPreviewing: Bool
     let onArrow: () -> Void
@@ -29,7 +30,11 @@ private struct BrowserKeyWiring: ViewModifier {
     func body(content: Content) -> some View {
         content
             .browserKeys(controller)
-            .onAppear { controller.isGridMode = isGrid }
+            .onAppear {
+                controller.isGridMode = isGrid
+                controller.isEnabled = isActive
+            }
+            .onChange(of: isActive) { _, new in controller.isEnabled = new }
             .onChange(of: isGrid) { _, new in controller.isGridMode = new }
             .onChange(of: isPreviewing) { _, new in controller.isPreviewing = new }
             .onChange(of: controller.arrowTick) { onArrow() }
@@ -40,6 +45,9 @@ private struct BrowserKeyWiring: ViewModifier {
 
 struct LibraryView: View {
     let model: AppModel
+    /// False while the pane is hidden (it stays in the hierarchy at zero
+    /// width): its toolbar, window title, and key monitor all stand down.
+    var isActive = true
 
     @AppStorage("libraryViewMode") private var viewMode: LibraryViewMode = .icon
     @AppStorage("librarySortKey") private var sortKeyRaw = LibrarySortKey.dateAdded.rawValue
@@ -105,6 +113,7 @@ struct LibraryView: View {
     var body: some View {
         shell.modifier(BrowserKeyWiring(
             controller: keyController,
+            isActive: isActive,
             isGrid: viewMode == .icon,
             isPreviewing: previewClip != nil,
             onArrow: moveSelectionForArrow,
@@ -119,9 +128,11 @@ struct LibraryView: View {
             Divider()
             pathBar
         }
-        .navigationTitle(library.currentFolder?.name ?? "Library")
-        .navigationSubtitle(subtitle)
-        .toolbar { toolbar }
+        // The pane stays mounted while hidden, so title and toolbar must
+        // follow visibility or they'd linger over the schedule-only window.
+        .navigationTitle(isActive ? (library.currentFolder?.name ?? "Library") : "Schedule")
+        .navigationSubtitle(isActive ? subtitle : "")
+        .toolbar { if isActive { toolbar } }
         .task { await library.loadIfNeeded() }
         // Fill in any missing posters once the current folder's clips are loaded
         // (covers the initial load and every folder navigation).
