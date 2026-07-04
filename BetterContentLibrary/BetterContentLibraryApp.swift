@@ -6,11 +6,18 @@
 //
 
 import SwiftUI
+import Sparkle
 import BetterContentCore
 
 @main
 struct BetterContentLibraryApp: App {
     @State private var auth = AuthService()
+
+    /// Sparkle's standard updater: schedules background checks (after asking
+    /// the user once) and drives the whole download/install UI. One per app.
+    private let updaterController = SPUStandardUpdaterController(
+        startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil
+    )
 
     var body: some Scene {
         WindowGroup {
@@ -19,6 +26,9 @@ struct BetterContentLibraryApp: App {
                 .task { await auth.start() }
         }
         .commands {
+            CommandGroup(after: .appInfo) {
+                CheckForUpdatesView(updater: updaterController.updater)
+            }
             PaneCommands()
         }
 

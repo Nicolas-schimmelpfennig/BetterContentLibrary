@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		5A0000000000000000000003 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 5A0000000000000000000002 /* Sparkle */; };
 		AA0000000000000000000003 /* BetterContentCore in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000002 /* BetterContentCore */; };
 		D000000000000000000000B1 /* BetterContentCore in Frameworks */ = {isa = PBXBuildFile; productRef = D000000000000000000000B2 /* BetterContentCore */; };
 /* End PBXBuildFile section */
@@ -16,9 +17,22 @@
 		D000000000000000000000B3 /* BetterContentLibrary-iOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "BetterContentLibrary-iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		5A0000000000000000000004 /* Exceptions for "BetterContentLibrary" folder in "BetterContentLibrary" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 372185602FEAA3CF008CF54E /* BetterContentLibrary */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		372185632FEAA3CF008CF54E /* BetterContentLibrary */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				5A0000000000000000000004 /* Exceptions for "BetterContentLibrary" folder in "BetterContentLibrary" target */,
+			);
 			path = BetterContentLibrary;
 			sourceTree = "<group>";
 		};
@@ -35,6 +49,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				AA0000000000000000000003 /* BetterContentCore in Frameworks */,
+				5A0000000000000000000003 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -88,6 +103,7 @@
 			name = BetterContentLibrary;
 			packageProductDependencies = (
 				AA0000000000000000000002 /* BetterContentCore */,
+				5A0000000000000000000002 /* Sparkle */,
 			);
 			productName = BetterContentLibrary;
 			productReference = 372185612FEAA3CF008CF54E /* BetterContentLibrary.app */;
@@ -145,6 +161,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				AA0000000000000000000001 /* XCLocalSwiftPackageReference "BetterContentCore" */,
+				5A0000000000000000000001 /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 372185622FEAA3CF008CF54E /* Products */;
@@ -327,6 +344,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = BetterContentLibrary/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -360,6 +378,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = BetterContentLibrary/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -486,7 +505,23 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		5A0000000000000000000001 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
+		5A0000000000000000000002 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5A0000000000000000000001 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
 		AA0000000000000000000002 /* BetterContentCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = BetterContentCore;

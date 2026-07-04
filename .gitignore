@@ -29,3 +29,7 @@ secrets/
 
 # Supabase CLI local temp
 supabase/.temp/
+
+# Sparkle release staging (built zips + generated appcast; uploaded to the
+# rolling "updates" GitHub release by scripts/release-macos.sh)
+updates/

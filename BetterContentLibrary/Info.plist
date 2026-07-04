@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Sparkle auto-updates. This partial plist merges into the generated
+	     Info.plist (GENERATE_INFOPLIST_FILE stays on); it exists only to carry
+	     keys Xcode has no INFOPLIST_KEY_ setting for. -->
+
+	<!-- The appcast lives as an asset on the rolling "updates" GitHub release
+	     (see scripts/release-macos.sh), so its URL never changes. -->
+	<key>SUFeedURL</key>
+	<string>https://github.com/Nicolas-schimmelpfennig/BetterContentLibrary/releases/download/updates/appcast.xml</string>
+
+	<!-- EdDSA public key; updates must be signed by the matching private key
+	     (in the login Keychain of the release machine, account "ed25519"). -->
+	<key>SUPublicEDKey</key>
+	<string>nU5/Jpn14faKH4pXUHPIaKbrmq3yNAEzebMpTKttsVI=</string>
+
+	<!-- Required for Sparkle to install updates from inside the app sandbox. -->
+	<key>SUEnableInstallerLauncherService</key>
+	<true/>
+</dict>
+</plist>
