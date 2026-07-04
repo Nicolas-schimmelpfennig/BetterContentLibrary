@@ -26,6 +26,7 @@ struct LibraryTableView: NSViewRepresentable {
     var onRename: (LibraryEntry, String) -> Void
     var onMove: ([String], UUID?) -> Void
     var onPreview: (Clip) -> Void
+    var onSchedule: (Clip) -> Void
     var onMarkPosted: ([Clip]) -> Void
     var onReopen: ([Clip]) -> Void
     var onRegenerate: ([Clip]) -> Void
@@ -312,6 +313,7 @@ struct LibraryTableView: NSViewRepresentable {
             case .clip(let clip):
                 let targetClips = self.targetClips(clicked: clicked)
                 addItem(to: menu, "Preview", enabled: clip.isPlayable) { [weak self] in self?.parent.onPreview(clip) }
+                addItem(to: menu, "Schedule…", enabled: clip.isPlayable) { [weak self] in self?.parent.onSchedule(clip) }
                 let postedTargets = targetClips.filter {
                     let status = parent.displayStatus($0)
                     return status == .scheduled || status == .ready

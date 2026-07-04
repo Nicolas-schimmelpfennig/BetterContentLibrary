@@ -20,6 +20,7 @@ struct ScheduleEditorSheet: View {
     private let existing: Schedule?
 
     @Environment(\.dismiss) private var dismiss
+    @AppStorage(SettingsKey.hiddenPlatforms) private var hiddenPlatformsRaw = ""
     @State private var clipId: UUID?
     @State private var platform: Platform = .instagram
     @State private var scheduledAt: Date
@@ -41,6 +42,10 @@ struct ScheduleEditorSheet: View {
         existing = nil
         _clipId = State(initialValue: clipId ?? model.schedule.schedulableClips.first?.id)
         _notifyProfileId = State(initialValue: model.schedule.currentProfileId)
+
+        // Default to the first platform the user hasn't hidden in Settings.
+        let hiddenRaw = UserDefaults.standard.string(forKey: SettingsKey.hiddenPlatforms) ?? ""
+        _platform = State(initialValue: Platform.visible(hiddenRaw: hiddenRaw).first ?? .instagram)
 
         let calendar = Calendar.current
         let base = day ?? calendar.date(byAdding: .day, value: 1, to: Date()) ?? Date()
@@ -233,11 +238,20 @@ struct ScheduleEditorSheet: View {
         }
     }
 
+    /// The chips on offer: what Settings → Platforms leaves visible, plus the
+    /// current selection even if since hidden (editing an old post must still
+    /// show its platform), in canonical order.
+    private var platformChoices: [Platform] {
+        let visible = Platform.visible(hiddenRaw: hiddenPlatformsRaw)
+        if visible.contains(platform) { return visible }
+        return Platform.allCases.filter { visible.contains($0) || $0 == platform }
+    }
+
     private var platformSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             sectionLabel("Platform")
             FlowLayout(spacing: 8) {
-                ForEach(Platform.allCases, id: \.self) { p in
+                ForEach(platformChoices, id: \.self) { p in
                     PlatformChip(platform: p, isSelected: platform == p) {
                         platform = p
                     }

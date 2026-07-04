@@ -38,6 +38,9 @@ struct SettingsView: View {
                 }
                 .formStyle(.grouped)
                 .tabItem { Label("General", systemImage: "gearshape") }
+
+                PlatformSettingsView()
+                    .tabItem { Label("Platforms", systemImage: "square.grid.2x2") }
             }
 
             Text(AppVersion.display)
@@ -46,5 +49,53 @@ struct SettingsView: View {
                 .padding(.bottom, 8)
         }
         .frame(width: 460, height: 380)
+    }
+}
+
+/// Which platforms the scheduling sheet offers. Stored as the hidden set
+/// (SettingsKey.hiddenPlatforms) so future platforms default to visible;
+/// the last visible platform can't be hidden.
+private struct PlatformSettingsView: View {
+    @AppStorage(SettingsKey.hiddenPlatforms) private var hiddenRaw = ""
+
+    private var hidden: Set<String> {
+        Set(hiddenRaw.split(separator: ",").map(String.init))
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                ForEach(Platform.allCases, id: \.self) { platform in
+                    Toggle(isOn: binding(for: platform)) {
+                        HStack(spacing: 8) {
+                            PlatformBadge(platform)
+                            Text(platform.displayName)
+                        }
+                    }
+                    .disabled(isLastVisible(platform))
+                }
+            } header: {
+                Text("Show when scheduling")
+            } footer: {
+                Text("Hidden platforms don't appear in the schedule sheet. Posts already scheduled to a hidden platform keep it.")
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func binding(for platform: Platform) -> Binding<Bool> {
+        Binding {
+            !hidden.contains(platform.rawValue)
+        } set: { visible in
+            var set = hidden
+            if visible { set.remove(platform.rawValue) } else { set.insert(platform.rawValue) }
+            hiddenRaw = set.sorted().joined(separator: ",")
+        }
+    }
+
+    /// True when this is the only platform still visible — its toggle locks
+    /// so the schedule sheet always has at least one choice.
+    private func isLastVisible(_ platform: Platform) -> Bool {
+        !hidden.contains(platform.rawValue) && hidden.count == Platform.allCases.count - 1
     }
 }

@@ -457,6 +457,7 @@ struct LibraryView: View {
             onRename: { item, name in commitRename(item: item, newName: name) },
             onMove: moveDropped,
             onPreview: { previewClip = $0 },
+            onSchedule: { schedulingClip = $0 },
             onMarkPosted: { clips in Task { await model.markPosted(clips) } },
             onReopen: { clips in Task { await model.reopen(clips) } },
             onRegenerate: { clips in Task { await model.regenerateThumbnails(for: clips) } },
@@ -1057,7 +1058,7 @@ struct ClipPreviewView: View {
             ZStack {
                 Color.black
                 if let player {
-                    VideoPlayer(player: player)
+                    PlayerView(player: player)
                 } else if failed {
                     Label("Couldn't load video", systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.secondary)
@@ -1077,5 +1078,26 @@ struct ClipPreviewView: View {
             }
         }
         .onDisappear { player?.pause() }
+    }
+}
+
+/// AppKit-native player (the same UI Quick Look and QuickTime use — matching
+/// VideoTag's preview feel). Deliberately NOT SwiftUI's `VideoPlayer`: that
+/// component aborts at runtime in exported Release builds (Swift runtime
+/// fatalError resolving `_AVKit_SwiftUI` generic superclass metadata; fine
+/// under Xcode, crashes in the shipped app) — see the 2026-07-04 crash logs.
+private struct PlayerView: NSViewRepresentable {
+    let player: AVPlayer
+
+    func makeNSView(context: Context) -> AVPlayerView {
+        let view = AVPlayerView()
+        view.player = player
+        view.controlsStyle = .floating
+        view.showsFullScreenToggleButton = true
+        return view
+    }
+
+    func updateNSView(_ view: AVPlayerView, context: Context) {
+        view.player = player
     }
 }

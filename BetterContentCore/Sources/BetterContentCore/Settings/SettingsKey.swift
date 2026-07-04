@@ -17,4 +17,20 @@ public enum SettingsKey {
     /// window.
     public static let showLibraryPane = "showLibraryPane"
     public static let showSchedulePane = "showSchedulePane"
+
+    /// Comma-joined raw values of platforms the user has hidden from the
+    /// scheduling UI (Settings → Platforms). Stored as the *hidden* set so a
+    /// platform added in a future version shows up by default.
+    public static let hiddenPlatforms = "hiddenPlatforms"
+}
+
+public extension Platform {
+    /// The platforms the scheduling UI should offer, given the raw
+    /// `SettingsKey.hiddenPlatforms` value. Falls back to all platforms if
+    /// somehow every one is hidden, so scheduling never dead-ends.
+    static func visible(hiddenRaw: String) -> [Platform] {
+        let hidden = Set(hiddenRaw.split(separator: ",").map(String.init))
+        let visible = allCases.filter { !hidden.contains($0.rawValue) }
+        return visible.isEmpty ? allCases : visible
+    }
 }
