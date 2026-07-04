@@ -9,17 +9,24 @@ launch).
 ## Cutting a release
 
 ```sh
-scripts/release-macos.sh 1.1
+scripts/release-macos.sh 0.2-alpha
 ```
 
-That archives a Release build with the version baked in, zips it, signs it
-with the EdDSA key, regenerates `appcast.xml`, and uploads both to the
-`updates` release. Users get the update within Sparkle's next check (or
-immediately via Check for Updates…).
+That archives a Release build with the version baked in, exports it signed
+with Developer ID, notarizes and staples it (so Gatekeeper opens it cleanly
+on any Mac), zips it, signs it with the EdDSA key, regenerates
+`appcast.xml`, and uploads both to the `updates` release. Users get the
+update within Sparkle's next check (or immediately via Check for Updates…).
 
-Pick a version higher than the last one (plain `MAJOR.MINOR` or
-`MAJOR.MINOR.PATCH`); Sparkle compares `CFBundleVersion`, which the script
-sets to the same value.
+The argument is the *marketing* version — any human-readable string
+("0.2-alpha", "1.0"). Update ordering doesn't depend on it: Sparkle compares
+`CFBundleVersion`, which the script derives from the clock
+(`YYYYMMDD.HHMM`), so every release automatically outranks all earlier ones.
+Both show in Settings' footer: `v0.2-alpha (20260704.1930)`.
+
+If notary credentials aren't stored yet, the script warns and skips
+notarization instead of failing — in-app updates still work (Sparkle doesn't
+quarantine what it installs); only fresh downloads hit Gatekeeper.
 
 ## Requirements on the release machine
 
@@ -30,6 +37,19 @@ sets to the same value.
   key is baked into the app (`SUPublicEDKey` in
   `BetterContentLibrary/Info.plist`); losing the private key means shipping a
   new key + manual reinstall on every machine.
+- A **Developer ID Application** certificate in the Keychain (one-time:
+  Xcode → Settings → Accounts → your team → Manage Certificates… → **+** →
+  Developer ID Application; needs the paid Developer Program and usually the
+  Account Holder role).
+- **Notary credentials** stored once as the `bcl-notary` keychain profile:
+
+  ```sh
+  xcrun notarytool store-credentials bcl-notary \
+      --apple-id <your apple id> --team-id 226AMQMFG9
+  ```
+
+  When prompted for a password, use an **app-specific password** generated
+  at account.apple.com (not your real Apple ID password).
 - `gh` authenticated with push access to the repo.
 - The `updates/` folder accumulates one zip per version — leave old ones in
   place so `generate_appcast` can keep prior feed entries and emit delta
@@ -37,15 +57,12 @@ sets to the same value.
 
 ## First install on a new machine
 
-Grab the newest zip from the `updates` release, unzip into `/Applications`.
-Builds are currently signed with an Apple **Development** certificate, not
-Developer ID, so Gatekeeper will complain on first launch: right-click →
-Open → Open. After that first launch, Sparkle handles all future updates
-without any Gatekeeper friction.
+Grab the newest zip from the `updates` release, unzip into `/Applications`,
+double-click. Builds are Developer ID-signed and notarized, so Gatekeeper
+opens them without complaint; Sparkle handles all updates from there.
 
-Proper fix when it matters: sign with a Developer ID certificate and
-notarize (requires the paid Apple Developer Program), then first installs
-are frictionless too.
+(Anyone still running an old pre-notarization build: right-click → Open
+once, or just replace it with a fresh download.)
 
 ## iOS
 

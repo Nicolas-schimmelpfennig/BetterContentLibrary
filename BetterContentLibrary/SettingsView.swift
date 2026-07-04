@@ -12,32 +12,39 @@ struct SettingsView: View {
     @AppStorage(SettingsKey.videoSkimming) private var videoSkimming = true
 
     var body: some View {
-        TabView {
-            Form {
-                Section {
-                    Toggle(isOn: $videoSkimming) {
-                        Text("Video skimming")
-                        Text("Scrub through a clip by hovering over its thumbnail. Turn off to show only the poster frame.")
+        VStack(spacing: 0) {
+            TabView {
+                Form {
+                    Section {
+                        Toggle(isOn: $videoSkimming) {
+                            Text("Video skimming")
+                            Text("Scrub through a clip by hovering over its thumbnail. Turn off to show only the poster frame.")
+                        }
+                    } header: {
+                        Text("Library")
                     }
-                } header: {
-                    Text("Library")
+                    Section {
+                        LabeledContent("Show or hide the Library pane") {
+                            Text("⌘L").monospaced().foregroundStyle(.secondary)
+                        }
+                        LabeledContent("Show or hide the Schedule pane") {
+                            Text("⌘S").monospaced().foregroundStyle(.secondary)
+                        }
+                    } header: {
+                        Text("Keyboard Shortcuts")
+                    } footer: {
+                        Text("Hiding one pane leaves the other full width; at least one stays visible. Also in the View menu.")
+                    }
                 }
-                Section {
-                    LabeledContent("Show or hide the Library pane") {
-                        Text("⌘L").monospaced().foregroundStyle(.secondary)
-                    }
-                    LabeledContent("Show or hide the Schedule pane") {
-                        Text("⌘S").monospaced().foregroundStyle(.secondary)
-                    }
-                } header: {
-                    Text("Keyboard Shortcuts")
-                } footer: {
-                    Text("Hiding one pane leaves the other full width; at least one stays visible. Also in the View menu.")
-                }
+                .formStyle(.grouped)
+                .tabItem { Label("General", systemImage: "gearshape") }
             }
-            .formStyle(.grouped)
-            .tabItem { Label("General", systemImage: "gearshape") }
+
+            Text(AppVersion.display)
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .padding(.bottom, 8)
         }
-        .frame(width: 460, height: 360)
+        .frame(width: 460, height: 380)
     }
 }

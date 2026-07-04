@@ -32,6 +32,11 @@ struct SettingsScreen: View {
                     Button("Sign Out", role: .destructive) {
                         Task { try? await auth.signOut() }
                     }
+                } footer: {
+                    Text(AppVersion.display)
+                        .frame(maxWidth: .infinity)
+                        .multilineTextAlignment(.center)
+                        .padding(.top, 12)
                 }
             }
             .navigationTitle("Settings")
