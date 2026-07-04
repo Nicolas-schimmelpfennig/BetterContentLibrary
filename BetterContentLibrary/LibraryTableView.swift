@@ -16,6 +16,9 @@ struct LibraryTableView: NSViewRepresentable {
     var items: [LibraryEntry]
     var subfolders: [Folder]
     var regenerating: Set<UUID>
+    /// A clip's lifecycle tag (uploading / scheduled / posted / …), derived
+    /// upstream so the table just renders it.
+    var displayStatus: (Clip) -> ClipDisplayStatus
     @Binding var selection: Set<String>
     @Binding var sortOrder: [KeyPathComparator<LibraryEntry>]
 
@@ -23,12 +26,14 @@ struct LibraryTableView: NSViewRepresentable {
     var onRename: (LibraryEntry, String) -> Void
     var onMove: ([String], UUID?) -> Void
     var onPreview: (Clip) -> Void
+    var onMarkPosted: ([Clip]) -> Void
     var onRegenerate: ([Clip]) -> Void
     var onDeleteFolder: (Folder) -> Void
     var onDeleteClips: ([Clip]) -> Void
 
     private static let columns: [(id: String, title: String, width: CGFloat, min: CGFloat)] = [
         ("name", "Name", 300, 180),
+        ("status", "Status", 90, 70),
         ("kind", "Kind", 80, 60),
         ("created", "Date Added", 160, 120),
         ("duration", "Duration", 80, 60),
@@ -53,7 +58,10 @@ struct LibraryTableView: NSViewRepresentable {
             column.title = spec.title
             column.width = spec.width
             column.minWidth = spec.min
-            column.sortDescriptorPrototype = NSSortDescriptor(key: spec.id, ascending: true)
+            // Status is derived (not a LibraryEntry sort key), so it doesn't sort.
+            if spec.id != "status" {
+                column.sortDescriptorPrototype = NSSortDescriptor(key: spec.id, ascending: true)
+            }
             tableView.addTableColumn(column)
         }
 
@@ -77,7 +85,7 @@ struct LibraryTableView: NSViewRepresentable {
         coordinator.items = items
         // Reload only when the displayed rows actually change, so selection and
         // arrow-nav (which re-run updateNSView) stay snappy.
-        let signature = Self.contentSignature(items)
+        let signature = contentSignature(items)
         if signature != coordinator.contentSignature {
             coordinator.contentSignature = signature
             coordinator.tableView?.reloadData()
@@ -86,7 +94,7 @@ struct LibraryTableView: NSViewRepresentable {
         coordinator.syncSelection()
     }
 
-    private static func contentSignature(_ items: [LibraryEntry]) -> Int {
+    private func contentSignature(_ items: [LibraryEntry]) -> Int {
         var hasher = Hasher()
         for item in items {
             hasher.combine(item.id)
@@ -94,6 +102,7 @@ struct LibraryTableView: NSViewRepresentable {
             hasher.combine(item.sortDuration)
             hasher.combine(item.sortSize)
             hasher.combine(item.sortDate)
+            if let clip = item.clip { hasher.combine(displayStatus(clip)) }
         }
         return hasher.finalize()
     }
@@ -163,7 +172,21 @@ struct LibraryTableView: NSViewRepresentable {
             let cell = (tableView.makeView(withIdentifier: id, owner: self) as? NSTableCellView)
                 ?? Self.makeCell(identifier: id, withIcon: isName)
 
-            cell.textField?.stringValue = LibraryTableView.text(for: item, columnID: id.rawValue)
+            if id.rawValue == "status" {
+                // Derived status tag, tinted in the status color. Cells are
+                // reused, so both branches set the color explicitly.
+                if let clip = item.clip {
+                    let status = parent.displayStatus(clip)
+                    cell.textField?.stringValue = status.label
+                    cell.textField?.textColor = NSColor(status.color)
+                } else {
+                    cell.textField?.stringValue = "—"
+                    cell.textField?.textColor = .tertiaryLabelColor
+                }
+            } else {
+                cell.textField?.stringValue = LibraryTableView.text(for: item, columnID: id.rawValue)
+                cell.textField?.textColor = .labelColor
+            }
 
             if isName {
                 cell.imageView?.image = NSImage(systemSymbolName: item.symbol, accessibilityDescription: nil)
@@ -288,6 +311,11 @@ struct LibraryTableView: NSViewRepresentable {
             case .clip(let clip):
                 let targetClips = self.targetClips(clicked: clicked)
                 addItem(to: menu, "Preview", enabled: clip.isPlayable) { [weak self] in self?.parent.onPreview(clip) }
+                let postedTargets = targetClips.filter { parent.displayStatus($0) == .scheduled }
+                if !postedTargets.isEmpty {
+                    let title = postedTargets.count > 1 ? "Mark \(postedTargets.count) as Posted" : "Mark as Posted"
+                    addItem(to: menu, title) { [weak self] in self?.parent.onMarkPosted(postedTargets) }
+                }
                 addItem(to: menu, "Rename") { [weak self] in self?.beginRename(row: tableView.clickedRow) }
                 let regenTitle = targetClips.count > 1 ? "Regenerate \(targetClips.count) Thumbnails" : "Regenerate Thumbnail"
                 addItem(to: menu, regenTitle, enabled: clip.isPlayable) { [weak self] in

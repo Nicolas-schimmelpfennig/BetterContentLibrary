@@ -54,7 +54,7 @@ struct DayDetailSheet: View {
                     Button { isAdding = true } label: { Image(systemName: "plus") }
                 }
             }
-            .sheet(isPresented: $isAdding) { AddScheduleSheet(day: day, model: schedule) }
+            .sheet(isPresented: $isAdding) { ScheduleFormSheet(day: day, model: schedule) }
         }
     }
 }
@@ -75,6 +75,7 @@ private struct ScheduledPostCard: View {
     let model: AppModel
 
     @State private var previewClip: Clip?
+    @State private var isEditing = false
     @State private var phase: DownloadPhase = .idle
 
     private var schedule: ScheduleModel { model.schedule }
@@ -84,9 +85,18 @@ private struct ScheduledPostCard: View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text(clip?.title ?? "Untitled")
-                        .font(.title2.bold())
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        Text(clip?.title ?? "Untitled")
+                            .font(.title2.bold())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Button {
+                            isEditing = true
+                        } label: {
+                            Label("Edit", systemImage: "pencil")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
 
                     thumbnail
                     metadata
@@ -99,6 +109,7 @@ private struct ScheduledPostCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
         .fullScreenCover(item: $previewClip) { ClipPreviewView(clip: $0, model: model) }
+        .sheet(isPresented: $isEditing) { ScheduleFormSheet(editing: post, model: schedule) }
     }
 
     @ViewBuilder

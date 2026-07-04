@@ -22,10 +22,22 @@ struct SettingsView: View {
                 } header: {
                     Text("Library")
                 }
+                Section {
+                    LabeledContent("Show or hide the Library pane") {
+                        Text("⌘L").monospaced().foregroundStyle(.secondary)
+                    }
+                    LabeledContent("Show or hide the Schedule pane") {
+                        Text("⌘S").monospaced().foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("Keyboard Shortcuts")
+                } footer: {
+                    Text("Hiding one pane leaves the other full width; at least one stays visible. Also in the View menu.")
+                }
             }
             .formStyle(.grouped)
             .tabItem { Label("General", systemImage: "gearshape") }
         }
-        .frame(width: 460, height: 240)
+        .frame(width: 460, height: 360)
     }
 }

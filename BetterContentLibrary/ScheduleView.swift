@@ -4,29 +4,47 @@
 //
 
 import SwiftUI
+import AppKit
 import BetterContentCore
 
-/// Month calendar for assigning clips to post date/times. Drag a chip to another
-/// day to reschedule; click a day's "+" to add.
+/// Month calendar (top) with a detail panel for the selected day (bottom).
+/// Drag a chip to another day to reschedule, drop a library clip on a day to
+/// schedule it, click a day to inspect it below, or double-click / "+" to add.
 struct ScheduleView: View {
     let model: AppModel
 
-    @State private var addTarget: AddTarget?
+    @State private var editorTarget: EditorTarget?
+    @State private var selectedDay = Calendar.current.startOfDay(for: Date())
 
     private var schedule: ScheduleModel { model.schedule }
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 1), count: 7)
+    private let calendar = Calendar.current
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            weekdayHeader
-            calendarGrid
+        GeometryReader { geo in
+            VStack(spacing: 0) {
+                header
+                Divider()
+                weekdayHeader
+                calendarGrid
+                    .frame(maxHeight: .infinity)
+                Divider()
+                DayDetailPanel(
+                    day: selectedDay,
+                    model: model,
+                    onAdd: { editorTarget = EditorTarget(day: selectedDay) },
+                    onEdit: { editorTarget = EditorTarget(day: selectedDay, schedule: $0) }
+                )
+                .frame(height: max(200, geo.size.height * 0.35))
+            }
         }
-        .navigationTitle("Schedule")
-        .task { await schedule.load() }
-        .sheet(item: $addTarget) { target in
-            AddScheduleSheet(day: target.day, model: schedule)
+        .task { await schedule.loadIfNeeded() }
+        .sheet(item: $editorTarget) { target in
+            if let existing = target.schedule {
+                ScheduleEditorSheet(model: model, editing: existing)
+            } else {
+                ScheduleEditorSheet(model: model, clipId: target.clipId, day: target.day)
+            }
         }
     }
 
@@ -34,11 +52,15 @@ struct ScheduleView: View {
         HStack(spacing: 12) {
             Text(schedule.monthTitle).font(.title2.bold())
             Spacer()
-            Button("Today") { schedule.goToToday() }
+            Button("Today") {
+                schedule.goToToday()
+                selectedDay = calendar.startOfDay(for: Date())
+            }
             Button { schedule.step(months: -1) } label: { Image(systemName: "chevron.left") }
             Button { schedule.step(months: 1) } label: { Image(systemName: "chevron.right") }
         }
-        .padding()
+        .padding(.horizontal)
+        .padding(.vertical, 10)
     }
 
     private var weekdayHeader: some View {
@@ -55,31 +77,56 @@ struct ScheduleView: View {
     }
 
     private var calendarGrid: some View {
-        LazyVGrid(columns: columns, spacing: 1) {
-            ForEach(schedule.gridDays, id: \.self) { day in
-                DayCell(
-                    day: day,
-                    model: schedule,
-                    onAdd: { addTarget = AddTarget(day: day) }
-                )
+        GeometryReader { geo in
+            // 8pt outer padding ×2 plus 5 row gaps of 1pt; the rest splits
+            // across the 6 rows so the grid always fills its space exactly.
+            let cellHeight = max(48, (geo.size.height - 16 - 5) / 6)
+            LazyVGrid(columns: columns, spacing: 1) {
+                ForEach(schedule.gridDays, id: \.self) { day in
+                    DayCell(
+                        day: day,
+                        model: schedule,
+                        height: cellHeight,
+                        isSelected: calendar.isDate(day, inSameDayAs: selectedDay),
+                        onSelect: { selectedDay = calendar.startOfDay(for: day) },
+                        onAdd: {
+                            selectedDay = calendar.startOfDay(for: day)
+                            editorTarget = EditorTarget(day: day)
+                        },
+                        onScheduleClip: { clipId in
+                            selectedDay = calendar.startOfDay(for: day)
+                            editorTarget = EditorTarget(day: day, clipId: clipId)
+                        }
+                    )
+                }
             }
+            .padding(8)
+            .background(Color.secondary.opacity(0.12))
         }
-        .padding(8)
-        .background(Color.secondary.opacity(0.12))
     }
 
-    struct AddTarget: Identifiable {
+    struct EditorTarget: Identifiable {
         let id = UUID()
         let day: Date
+        var clipId: UUID?
+        /// When set, the editor opens on this schedule instead of creating.
+        var schedule: Schedule?
     }
 }
+
+// MARK: - Day cell
 
 private struct DayCell: View {
     let day: Date
     let model: ScheduleModel
+    let height: CGFloat
+    let isSelected: Bool
+    let onSelect: () -> Void
     let onAdd: () -> Void
+    let onScheduleClip: (UUID) -> Void
 
     @State private var isHovering = false
+    @State private var isDropTargeted = false
 
     private var dayNumber: String { day.formatted(.dateTime.day()) }
     private var inMonth: Bool { model.isInCurrentMonth(day) }
@@ -115,22 +162,39 @@ private struct DayCell: View {
             Spacer(minLength: 0)
         }
         .padding(4)
-        .frame(height: 96, alignment: .top)
+        .frame(height: height, alignment: .top)
         .frame(maxWidth: .infinity)
+        .clipped()
+        .contentShape(Rectangle())
         .background(inMonth ? Color(nsColor: .controlBackgroundColor) : Color(nsColor: .windowBackgroundColor))
         .overlay {
-            if isHovering { RoundedRectangle(cornerRadius: 4).strokeBorder(Color.accentColor.opacity(0.5)) }
+            if isDropTargeted {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color.accentColor.opacity(0.12))
+                RoundedRectangle(cornerRadius: 4).strokeBorder(Color.accentColor, lineWidth: 2)
+            } else if isSelected {
+                RoundedRectangle(cornerRadius: 4).strokeBorder(Color.accentColor, lineWidth: 2)
+            } else if isHovering {
+                RoundedRectangle(cornerRadius: 4).strokeBorder(Color.accentColor.opacity(0.5))
+            }
         }
         .onHover { isHovering = $0 }
         .onTapGesture(count: 2) { onAdd() }
+        .onTapGesture { onSelect() }
+        // Both calendar chips and library clips drag UUID strings; an id that
+        // matches an existing schedule is a chip move, anything else is a clip
+        // being dropped in from the library — open the editor prefilled.
         .dropDestination(for: String.self) { ids, _ in
             for id in ids {
-                if let uuid = UUID(uuidString: id) {
+                guard let uuid = UUID(uuidString: id) else { continue }
+                if model.items.contains(where: { $0.id == uuid }) {
                     Task { await model.reschedule(id: uuid, toDay: day) }
+                } else {
+                    onScheduleClip(uuid)
                 }
             }
             return true
-        }
+        } isTargeted: { isDropTargeted = $0 }
     }
 
     private var numberColor: Color {
@@ -145,17 +209,18 @@ private struct ScheduleChip: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            Circle().fill(PlatformStyle.color(schedule.platform)).frame(width: 6, height: 6)
+            Circle().fill(schedule.platform.brandColor).frame(width: 6, height: 6)
             Text(timeText)
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(.secondary)
             Text(title)
                 .font(.system(size: 10))
+                .strikethrough(schedule.status == .skipped)
                 .lineLimit(1)
         }
         .padding(.horizontal, 4).padding(.vertical, 2)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(PlatformStyle.color(schedule.platform).opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
+        .background(schedule.platform.brandColor.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
     }
 
     private var timeText: String {
@@ -163,122 +228,179 @@ private struct ScheduleChip: View {
     }
 }
 
-private struct AddScheduleSheet: View {
+// MARK: - Selected-day detail panel
+
+/// Everything scheduled on the selected day, as rows under the calendar.
+private struct DayDetailPanel: View {
     let day: Date
-    let model: ScheduleModel
+    let model: AppModel
+    let onAdd: () -> Void
+    let onEdit: (Schedule) -> Void
 
-    @Environment(\.dismiss) private var dismiss
-    @State private var clipId: UUID?
-    @State private var platform: Platform = .instagram
-    @State private var time: Date
-    @State private var notes = ""
-    @State private var notifyProfileId: UUID?
+    @State private var previewClip: Clip?
 
-    init(day: Date, model: ScheduleModel) {
-        self.day = day
-        self.model = model
-        // Default to 9:00 AM on the chosen day.
-        var comps = Calendar.current.dateComponents([.year, .month, .day], from: day)
-        comps.hour = 9
-        comps.minute = 0
-        _time = State(initialValue: Calendar.current.date(from: comps) ?? day)
-        _clipId = State(initialValue: model.schedulableClips.first?.id)
-        _notifyProfileId = State(initialValue: model.currentProfileId)
+    private var schedule: ScheduleModel { model.schedule }
+    private var posts: [Schedule] {
+        schedule.schedules(on: day).sorted { $0.scheduledAt < $1.scheduledAt }
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text("Schedule for \(day.formatted(.dateTime.weekday().month().day()))").font(.headline)
+            HStack(spacing: 8) {
+                Text(day.formatted(.dateTime.weekday(.wide).month().day()))
+                    .font(.headline)
+                if !posts.isEmpty {
+                    Text("\(posts.count) post\(posts.count == 1 ? "" : "s")")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
+                Button(action: onAdd) { Image(systemName: "plus") }
+                    .buttonStyle(.borderless)
+                    .help("Schedule a post on this day")
             }
-            .padding()
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(.bar)
+
             Divider()
 
-            if model.schedulableClips.isEmpty {
-                ContentUnavailableView(
-                    "No clips to schedule",
-                    systemImage: "film",
-                    description: Text("Upload a video first, then schedule it here.")
-                )
-                .frame(width: 420, height: 180)
+            if posts.isEmpty {
+                VStack(spacing: 10) {
+                    Text("Nothing scheduled")
+                        .foregroundStyle(.secondary)
+                    Button("Schedule a Post") { onAdd() }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                Form {
-                    Picker("Clip", selection: $clipId) {
-                        ForEach(model.schedulableClips) { clip in
-                            Text(clip.title).tag(Optional(clip.id))
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(posts) { post in
+                            ScheduledPostRow(
+                                post: post,
+                                model: model,
+                                onPreview: { previewClip = $0 },
+                                onEdit: { onEdit(post) }
+                            )
                         }
                     }
-                    Picker("Platform", selection: $platform) {
-                        ForEach(Platform.allCases, id: \.self) { p in
-                            Text(PlatformStyle.name(p)).tag(p)
-                        }
-                    }
-                    Picker("Notify", selection: $notifyProfileId) {
-                        Text("No one").tag(UUID?.none)
-                        ForEach(model.orgMembers) { member in
-                            Text(member.displayName ?? "Member").tag(Optional(member.id))
-                        }
-                    }
-                    DatePicker("Time", selection: $time, displayedComponents: [.hourAndMinute])
-                    TextField("Notes (optional)", text: $notes, axis: .vertical)
+                    .padding(12)
                 }
-                .formStyle(.grouped)
-                .frame(width: 420)
             }
-
-            Divider()
-            HStack {
-                Spacer()
-                Button("Cancel", role: .cancel) { dismiss() }
-                Button("Schedule") {
-                    if let clipId {
-                        let when = combine(day: day, time: time)
-                        Task { await model.add(clipId: clipId, platform: platform, at: when, notes: notes.isEmpty ? nil : notes, notifyProfileId: notifyProfileId) }
-                    }
-                    dismiss()
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(clipId == nil)
-            }
-            .padding()
         }
-    }
-
-    private func combine(day: Date, time: Date) -> Date {
-        let cal = Calendar.current
-        var comps = cal.dateComponents([.year, .month, .day], from: day)
-        let t = cal.dateComponents([.hour, .minute], from: time)
-        comps.hour = t.hour
-        comps.minute = t.minute
-        return cal.date(from: comps) ?? day
+        .sheet(item: $previewClip) { clip in
+            ClipPreviewView(clip: clip, model: model)
+        }
     }
 }
 
-/// Per-platform colors and display names.
-enum PlatformStyle {
-    static func color(_ platform: Platform) -> Color {
-        switch platform {
-        case .instagram: return .pink
-        case .tiktok: return .cyan
-        case .youtube, .youtubeShorts: return .red
-        case .x: return .primary
-        case .facebook: return .blue
-        case .linkedin: return .indigo
-        case .other: return .gray
+/// One scheduled post: thumbnail, time, platform, title, caption, status.
+/// Clicking the row opens it in the schedule editor; the thumbnail previews.
+private struct ScheduledPostRow: View {
+    let post: Schedule
+    let model: AppModel
+    let onPreview: (Clip) -> Void
+    let onEdit: () -> Void
+
+    @State private var poster: NSImage?
+
+    private var schedule: ScheduleModel { model.schedule }
+    private var clip: Clip? { schedule.clip(for: post) }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            thumbnail
+            details
+            Spacer(minLength: 0)
+            statusBadge
+        }
+        .padding(8)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+        .contentShape(Rectangle())
+        .onTapGesture { onEdit() }
+        .contextMenu { menu }
+    }
+
+    private var thumbnail: some View {
+        Button {
+            if let clip, clip.isPlayable { onPreview(clip) }
+        } label: {
+            ZStack {
+                RoundedRectangle(cornerRadius: 6).fill(.quaternary)
+                if let poster {
+                    Image(nsImage: poster)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                }
+                if clip?.isPlayable == true {
+                    Image(systemName: "play.circle.fill")
+                        .font(.system(size: 18))
+                        .foregroundStyle(.white.opacity(0.85))
+                        .shadow(radius: 2)
+                } else if poster == nil {
+                    Image(systemName: "film").foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: 96, height: 54)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
+        .help("Preview clip")
+        .task(id: clip?.id) {
+            poster = nil
+            if let clip { poster = await model.thumbnails.image(for: clip) }
         }
     }
 
-    static func name(_ platform: Platform) -> String {
-        switch platform {
-        case .instagram: return "Instagram"
-        case .tiktok: return "TikTok"
-        case .youtube: return "YouTube"
-        case .youtubeShorts: return "YouTube Shorts"
-        case .x: return "X"
-        case .facebook: return "Facebook"
-        case .linkedin: return "LinkedIn"
-        case .other: return "Other"
+    private var details: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Text(post.scheduledAt.formatted(.dateTime.hour().minute()))
+                    .font(.callout.weight(.semibold).monospacedDigit())
+                Circle().fill(post.platform.brandColor).frame(width: 7, height: 7)
+                Text(post.platform.displayName)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            Text(clip?.title ?? "Clip unavailable")
+                .font(.callout.weight(.medium))
+                .strikethrough(post.status == .skipped)
+                .lineLimit(1)
+            if let caption = post.caption, !caption.isEmpty {
+                Text(caption)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            if let id = post.notifyProfileId,
+               let name = schedule.profilesById[id]?.displayName {
+                Label(name, systemImage: "bell")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
         }
+    }
+
+    private var statusBadge: some View {
+        Text(post.status.rawValue.capitalized)
+            .font(.caption2.weight(.semibold))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .foregroundStyle(post.status.color)
+            .background(post.status.color.opacity(0.15), in: Capsule())
+    }
+
+    @ViewBuilder
+    private var menu: some View {
+        Button("Edit…") { onEdit() }
+        Button("Preview") { if let clip { onPreview(clip) } }
+            .disabled(clip?.isPlayable != true)
+        Divider()
+        if post.status == .planned {
+            Button("Mark as Posted") { Task { await schedule.markPosted(post.id) } }
+            Button("Skip") { Task { await schedule.skip(post.id) } }
+        }
+        Divider()
+        Button("Delete", role: .destructive) { Task { await schedule.delete(post.id) } }
     }
 }

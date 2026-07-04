@@ -29,6 +29,12 @@ public final class ScheduleModel {
     public private(set) var profilesById: [UUID: Profile] = [:]
     public var errorMessage: String?
 
+    /// Set after the first `load()`, successful or not. Lets the initial
+    /// view `.task` skip refetching on every appearance (e.g. a pane being
+    /// re-shown) — realtime sync and explicit actions (month navigation,
+    /// add/edit/delete, …) all call `load()` directly and stay live.
+    public private(set) var hasLoaded = false
+
     public init(orgId: UUID, currentProfileId: UUID) {
         self.orgId = orgId
         self.currentProfileId = currentProfileId
@@ -108,6 +114,7 @@ public final class ScheduleModel {
     // MARK: Data
 
     public func load() async {
+        defer { hasLoaded = true }
         do {
             let days = gridDays
             guard let start = days.first,
@@ -133,6 +140,14 @@ public final class ScheduleModel {
         }
     }
 
+    /// Loads only if nothing has been loaded yet this session. For the view's
+    /// initial `.task`, so a pane being hidden and re-shown (or any other
+    /// remount) doesn't pay for a network refetch of data already in memory.
+    public func loadIfNeeded() async {
+        guard !hasLoaded else { return }
+        await load()
+    }
+
     public func add(
         clipId: UUID,
         platform: Platform,
@@ -146,6 +161,28 @@ public final class ScheduleModel {
                 clipId: clipId, orgId: orgId, platform: platform,
                 scheduledAt: date, caption: caption, notes: notes,
                 notifyProfileId: notifyProfileId
+            )
+            await load()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Rewrites every user-editable field of an existing schedule (the editor's
+    /// save on an existing post).
+    public func update(
+        id: UUID,
+        clipId: UUID,
+        platform: Platform,
+        at date: Date,
+        caption: String?,
+        notes: String?,
+        notifyProfileId: UUID?
+    ) async {
+        do {
+            try await schedules.update(
+                id, clipId: clipId, platform: platform, scheduledAt: date,
+                caption: caption, notes: notes, notifyProfileId: notifyProfileId
             )
             await load()
         } catch {

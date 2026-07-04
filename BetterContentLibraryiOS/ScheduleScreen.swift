@@ -17,6 +17,7 @@ struct ScheduleScreen: View {
     @State private var selectedDay = Date()
     @State private var detailDay: DaySelection?
     @State private var addDay: DaySelection?
+    @State private var editingPost: Schedule?
     @State private var deepLink = DeepLinkCenter.shared
 
     private var schedule: ScheduleModel { model.schedule }
@@ -46,7 +47,7 @@ struct ScheduleScreen: View {
                     Button { schedule.step(months: 1) } label: { Image(systemName: "chevron.right") }
                 }
             }
-            .task { await schedule.load() }
+            .task { await schedule.loadIfNeeded() }
             // Open the relevant day's card when a tapped notification deep-links here
             // (covers both cold launch and while running).
             .task(id: deepLink.scheduleDay) {
@@ -60,7 +61,10 @@ struct ScheduleScreen: View {
                 DayDetailSheet(day: selection.date, model: model)
             }
             .sheet(item: $addDay) { selection in
-                AddScheduleSheet(day: selection.date, model: schedule)
+                ScheduleFormSheet(day: selection.date, model: schedule)
+            }
+            .sheet(item: $editingPost) { post in
+                ScheduleFormSheet(editing: post, model: schedule)
             }
         }
     }
@@ -240,11 +244,14 @@ struct ScheduleScreen: View {
                         .buttonStyle(.plain)
                         .draggable(sched.id.uuidString)
                         .contextMenu {
+                            Button { editingPost = sched } label: {
+                                Label("Edit…", systemImage: "pencil")
+                            }
                             if sched.status == .planned {
                                 Button("Mark as Posted") { Task { await schedule.markPosted(sched.id) } }
                                 Button("Skip") { Task { await schedule.skip(sched.id) } }
-                                Divider()
                             }
+                            Divider()
                             Button("Delete", role: .destructive) {
                                 Task { await schedule.delete(sched.id) }
                             }
@@ -283,28 +290,44 @@ struct ScheduleScreen: View {
     }
 }
 
-// MARK: - Add Schedule sheet
+// MARK: - Schedule form (create & edit)
 
-struct AddScheduleSheet: View {
-    let day: Date
+struct ScheduleFormSheet: View {
     let model: ScheduleModel
+    /// When set, the sheet edits this schedule in place instead of creating.
+    private let existing: Schedule?
 
     @Environment(\.dismiss) private var dismiss
     @State private var clipId: UUID?
     @State private var platform: Platform = .instagram
-    @State private var time: Date
+    @State private var scheduledAt: Date
     @State private var caption = ""
+    @State private var notes = ""
     @State private var notifyProfileId: UUID?
 
+    /// Create a new post, prefilled to `day` at 9:00 (every field editable).
     init(day: Date, model: ScheduleModel) {
-        self.day = day
         self.model = model
+        existing = nil
         var comps = Calendar.current.dateComponents([.year, .month, .day], from: day)
         comps.hour = 9
         comps.minute = 0
-        _time = State(initialValue: Calendar.current.date(from: comps) ?? day)
+        _scheduledAt = State(initialValue: Calendar.current.date(from: comps) ?? day)
         _clipId = State(initialValue: model.schedulableClips.first?.id)
         _notifyProfileId = State(initialValue: model.currentProfileId)
+    }
+
+    /// Edit an existing scheduled post: every field prefills from it, and
+    /// saving updates the schedule in place.
+    init(editing schedule: Schedule, model: ScheduleModel) {
+        self.model = model
+        existing = schedule
+        _clipId = State(initialValue: schedule.clipId)
+        _platform = State(initialValue: schedule.platform)
+        _scheduledAt = State(initialValue: schedule.scheduledAt)
+        _caption = State(initialValue: schedule.caption ?? "")
+        _notes = State(initialValue: schedule.notes ?? "")
+        _notifyProfileId = State(initialValue: schedule.notifyProfileId)
     }
 
     private var captionLimit: Int {
@@ -315,10 +338,21 @@ struct AddScheduleSheet: View {
         }
     }
 
+    /// The preselected clip is offered even if it fell outside the capped
+    /// schedulable list, so editing an old post always resolves its clip.
+    private var clipChoices: [Clip] {
+        var clips = model.schedulableClips
+        if let clipId, !clips.contains(where: { $0.id == clipId }),
+           let extra = model.clipsById[clipId] {
+            clips.insert(extra, at: 0)
+        }
+        return clips
+    }
+
     var body: some View {
         NavigationStack {
             Group {
-                if model.schedulableClips.isEmpty {
+                if clipChoices.isEmpty {
                     ContentUnavailableView(
                         "No clips to schedule",
                         systemImage: "film",
@@ -328,7 +362,7 @@ struct AddScheduleSheet: View {
                     Form {
                         Section {
                             Picker("Clip", selection: $clipId) {
-                                ForEach(model.schedulableClips) { clip in
+                                ForEach(clipChoices) { clip in
                                     Text(clip.title).tag(Optional(clip.id))
                                 }
                             }
@@ -338,7 +372,8 @@ struct AddScheduleSheet: View {
                                 .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
                         }
                         Section {
-                            DatePicker("Time", selection: $time, displayedComponents: [.hourAndMinute])
+                            DatePicker("When", selection: $scheduledAt,
+                                       displayedComponents: [.date, .hourAndMinute])
                             Picker("Notify", selection: $notifyProfileId) {
                                 Text("No one").tag(UUID?.none)
                                 ForEach(model.orgMembers) { member in
@@ -354,34 +389,53 @@ struct AddScheduleSheet: View {
                                 .font(.caption.monospacedDigit())
                                 .foregroundStyle(caption.count > captionLimit ? .red : .secondary)
                         }
+                        Section {
+                            TextField("Notes — context for whoever posts this", text: $notes, axis: .vertical)
+                                .lineLimit(2...6)
+                        } footer: {
+                            Text("Internal — only your team sees this")
+                        }
                     }
                 }
             }
-            .navigationTitle(day.formatted(.dateTime.weekday().month().day()))
+            .navigationTitle(existing == nil
+                             ? scheduledAt.formatted(.dateTime.weekday().month().day())
+                             : "Edit Post")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Add") {
-                        if let clipId {
-                            let when = combine(day: day, time: time)
-                            let trimmed = caption.trimmingCharacters(in: .whitespacesAndNewlines)
-                            Task {
-                                await model.add(
-                                    clipId: clipId, platform: platform, at: when,
-                                    caption: trimmed.isEmpty ? nil : trimmed,
-                                    notes: nil, notifyProfileId: notifyProfileId
-                                )
-                            }
-                        }
-                        dismiss()
-                    }
-                    .disabled(clipId == nil)
+                    Button(existing == nil ? "Add" : "Save") { save() }
+                        .disabled(clipId == nil)
                 }
             }
         }
+    }
+
+    private func save() {
+        guard let clipId else { return }
+        let trimmedCaption = caption.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        Task {
+            if let existing {
+                await model.update(
+                    id: existing.id, clipId: clipId, platform: platform, at: scheduledAt,
+                    caption: trimmedCaption.isEmpty ? nil : trimmedCaption,
+                    notes: trimmedNotes.isEmpty ? nil : trimmedNotes,
+                    notifyProfileId: notifyProfileId
+                )
+            } else {
+                await model.add(
+                    clipId: clipId, platform: platform, at: scheduledAt,
+                    caption: trimmedCaption.isEmpty ? nil : trimmedCaption,
+                    notes: trimmedNotes.isEmpty ? nil : trimmedNotes,
+                    notifyProfileId: notifyProfileId
+                )
+            }
+        }
+        dismiss()
     }
 
     /// Equal-width platform chips; selection gets the 2px brand-color border.
@@ -411,14 +465,5 @@ struct AddScheduleSheet: View {
                 .buttonStyle(.plain)
             }
         }
-    }
-
-    private func combine(day: Date, time: Date) -> Date {
-        let cal = Calendar.current
-        var comps = cal.dateComponents([.year, .month, .day], from: day)
-        let t = cal.dateComponents([.hour, .minute], from: time)
-        comps.hour = t.hour
-        comps.minute = t.minute
-        return cal.date(from: comps) ?? day
     }
 }

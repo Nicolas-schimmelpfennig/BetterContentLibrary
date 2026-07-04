@@ -64,6 +64,11 @@ struct ClipThumbnailView: View {
             guard let key = skimKey else { return }
             if let frame = await skim.frame(for: clip, key: key) { skimImage = frame }
         }
+        // Resolve the stream URL and open the asset as soon as the card is on
+        // screen, so the first drag doesn't wait on that round trip.
+        .task(id: clip.id) {
+            if canSkim { await skim.warm(for: clip) }
+        }
     }
 
     private var skimGesture: some Gesture {

@@ -16,14 +16,24 @@ import Observation
 public final class LibraryModel {
     private let clips: ClipsService
     private let folders: FoldersService
+    private let schedules = SchedulesService()
     public let orgId: UUID
 
     /// Breadcrumb from root; the last element is the current folder (empty = root).
     public private(set) var path: [Folder] = []
     public private(set) var subfolders: [Folder] = []
     public private(set) var items: [Clip] = []
+    /// Schedules per clip (org-wide), for deriving each clip's status tag
+    /// (uploading / scheduled / posted / …) in the library.
+    public private(set) var schedulesByClip: [UUID: [Schedule]] = [:]
     public private(set) var isLoading = false
     public var errorMessage: String?
+
+    /// Set after the first `load()`, successful or not. Lets the initial
+    /// view `.task` skip refetching on every appearance (e.g. a pane being
+    /// re-shown) — realtime sync and explicit actions (navigate, create,
+    /// delete, refresh button, …) all call `load()` directly and stay live.
+    public private(set) var hasLoaded = false
 
     public var currentFolder: Folder? { path.last }
 
@@ -42,15 +52,31 @@ public final class LibraryModel {
 
     public func load() async {
         isLoading = true
-        defer { isLoading = false }
+        defer { isLoading = false; hasLoaded = true }
         do {
             async let subs = folders.list(parent: currentFolder?.id)
             async let cl = clips.list(inFolder: currentFolder?.id)
+            async let sch = schedules.listAll()
             subfolders = try await subs
             items = try await cl
+            schedulesByClip = Dictionary(grouping: try await sch, by: \.clipId)
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    /// Loads only if nothing has been loaded yet this session. For the view's
+    /// initial `.task`, so a pane being hidden and re-shown (or any other
+    /// remount) doesn't pay for a network refetch of data already in memory.
+    public func loadIfNeeded() async {
+        guard !hasLoaded else { return }
+        await load()
+    }
+
+    /// The lifecycle tag a clip shows in the library: its transfer state
+    /// merged with what its schedules say (scheduled / posted).
+    public func displayStatus(for clip: Clip) -> ClipDisplayStatus {
+        .derive(clip: clip, schedules: schedulesByClip[clip.id] ?? [])
     }
 
     public func open(_ folder: Folder) async {
@@ -149,4 +175,5 @@ public final class LibraryModel {
             errorMessage = error.localizedDescription
         }
     }
+
 }

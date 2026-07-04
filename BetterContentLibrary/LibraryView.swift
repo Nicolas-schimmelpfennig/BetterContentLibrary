@@ -11,6 +11,7 @@
 import SwiftUI
 import AppKit
 import AVKit
+import UniformTypeIdentifiers
 import BetterContentCore
 
 enum LibraryViewMode: String { case icon, list }
@@ -61,6 +62,19 @@ struct LibraryView: View {
     @State private var pendingDeletion: [Clip] = []
     @State private var isConfirmingDelete = false
 
+    // Import flow (absorbed from the old Upload section): drop or pick files,
+    // review each in a DraftSheet, then upload into the current folder.
+    @State private var isImportTargeted = false
+    @State private var isPreparing = false
+    @State private var importQueue: [ClipDraft] = []
+    @State private var importError: String?
+    @State private var isChoosingFile = false
+
+    @State private var schedulingClip: Clip?
+
+    /// Narrows the library to clips whose status tag matches (session-scoped).
+    @State private var statusFilter: ClipDisplayStatus?
+
     @StateObject private var keyController = BrowserKeyController()
 
     private var library: LibraryModel { model.library }
@@ -76,10 +90,15 @@ struct LibraryView: View {
     }
 
     /// Folders first (sorted among themselves), then clips — Finder's
-    /// "keep folders on top", regardless of the chosen sort.
+    /// "keep folders on top", regardless of the chosen sort. A status filter
+    /// narrows the clips; folders stay visible so navigation still works.
     private var items: [LibraryEntry] {
         let folders = library.subfolders.map(LibraryEntry.folder).sorted(using: comparators)
-        let clips = library.items.map(LibraryEntry.clip).sorted(using: comparators)
+        var clipItems = library.items
+        if let statusFilter {
+            clipItems = clipItems.filter { library.displayStatus(for: $0) == statusFilter }
+        }
+        let clips = clipItems.map(LibraryEntry.clip).sorted(using: comparators)
         return folders + clips
     }
 
@@ -103,10 +122,43 @@ struct LibraryView: View {
         .navigationTitle(library.currentFolder?.name ?? "Library")
         .navigationSubtitle(subtitle)
         .toolbar { toolbar }
-        .task { await library.load() }
+        .task { await library.loadIfNeeded() }
         // Fill in any missing posters once the current folder's clips are loaded
         // (covers the initial load and every folder navigation).
         .onChange(of: library.items) { Task { await model.backfillMissingThumbnails() } }
+        .dropDestination(for: URL.self) { urls, _ in
+            prepareImport(urls)
+            return true
+        } isTargeted: { isImportTargeted = $0 }
+        .overlay { importDropOverlay }
+        .fileImporter(
+            isPresented: $isChoosingFile,
+            allowedContentTypes: [.movie, .video, .mpeg4Movie, .quickTimeMovie],
+            allowsMultipleSelection: true
+        ) { result in
+            if case let .success(urls) = result { prepareImport(urls) }
+        }
+        .sheet(item: bindingToFirstDraft) { draft in
+            DraftSheet(
+                draft: draft,
+                onUpload: { edited in
+                    Task { await model.upload(edited) }
+                    advanceImportQueue()
+                },
+                onCancel: {
+                    model.discard(draft)
+                    advanceImportQueue()
+                }
+            )
+        }
+        .sheet(item: $schedulingClip) { clip in
+            ScheduleEditorSheet(model: model, clipId: clip.id)
+        }
+        .alert("Couldn't Add Video", isPresented: importErrorPresented) {
+            Button("OK") { importError = nil }
+        } message: {
+            Text(importError ?? "")
+        }
         .sheet(item: $previewClip) { clip in
             ClipPreviewView(clip: clip, model: model)
         }
@@ -171,7 +223,7 @@ struct LibraryView: View {
             }
             .controlGroupStyle(.navigation)
         }
-        ToolbarItem {
+        ToolbarItem(placement: .navigation) {
             Picker("View", selection: $viewMode) {
                 Image(systemName: "square.grid.2x2").tag(LibraryViewMode.icon)
                 Image(systemName: "list.bullet").tag(LibraryViewMode.list)
@@ -179,7 +231,7 @@ struct LibraryView: View {
             .pickerStyle(.segmented)
             .help("Switch between icon and list views")
         }
-        ToolbarItem {
+        ToolbarItem(placement: .navigation) {
             Menu {
                 Picker("Sort By", selection: sortKeyBinding) {
                     ForEach(LibrarySortKey.menuCases) { key in
@@ -196,19 +248,114 @@ struct LibraryView: View {
             }
             .help("Sort items")
         }
-        ToolbarItem(placement: .primaryAction) {
+        ToolbarItem(placement: .navigation) {
+            Menu {
+                Picker("Filter", selection: $statusFilter) {
+                    Text("All Statuses").tag(ClipDisplayStatus?.none)
+                    ForEach(ClipDisplayStatus.libraryFilterCases, id: \.self) { status in
+                        Label {
+                            Text(status.label)
+                        } icon: {
+                            Image(systemName: "circle.fill")
+                                .foregroundStyle(status.color)
+                        }
+                        .tag(Optional(status))
+                    }
+                }
+                .pickerStyle(.inline)
+            } label: {
+                Label("Status", systemImage: statusFilter == nil ? "tag" : "tag.fill")
+            }
+            .help("Filter by status")
+        }
+        ToolbarItem(placement: .navigation) {
+            Button { isChoosingFile = true } label: {
+                Image(systemName: "plus")
+            }
+            .disabled(isPreparing)
+            .help("Add Videos…")
+        }
+        ToolbarItem(placement: .navigation) {
             Button { isCreatingFolder = true } label: {
                 Image(systemName: "folder.badge.plus")
             }
             .help("New Folder")
         }
-        ToolbarItem(placement: .primaryAction) {
+        ToolbarItem(placement: .navigation) {
             Button { Task { await library.load() } } label: {
                 Image(systemName: "arrow.clockwise")
             }
             .disabled(library.isLoading)
             .help("Refresh")
         }
+    }
+
+    // MARK: Import (drop or add files — the old Upload section, absorbed)
+
+    /// Dashed drop-target hint shown while a file drag hovers the library.
+    @ViewBuilder
+    private var importDropOverlay: some View {
+        if isImportTargeted || isPreparing {
+            ZStack {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.accentColor.opacity(0.08))
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(Color.accentColor, style: StrokeStyle(lineWidth: 2, dash: [8]))
+                VStack(spacing: 10) {
+                    Image(systemName: isPreparing ? "hourglass" : "square.and.arrow.down.on.square")
+                        .font(.system(size: 40))
+                        .foregroundStyle(Color.accentColor)
+                        .symbolEffect(.pulse, isActive: isPreparing)
+                    Text(isPreparing ? "Reading video…" : "Drop videos to add them to the library")
+                        .font(.title3.weight(.medium))
+                }
+                .padding(24)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            }
+            .padding(12)
+            .allowsHitTesting(false)
+        }
+    }
+
+    // Presents a DraftSheet for the first queued draft.
+    private var bindingToFirstDraft: Binding<ClipDraft?> {
+        Binding(
+            get: { importQueue.first },
+            set: { newValue in if newValue == nil { advanceImportQueue() } }
+        )
+    }
+
+    private var importErrorPresented: Binding<Bool> {
+        Binding(
+            get: { importError != nil },
+            set: { if !$0 { importError = nil } }
+        )
+    }
+
+    private func advanceImportQueue() {
+        if !importQueue.isEmpty { importQueue.removeFirst() }
+    }
+
+    private func prepareImport(_ urls: [URL]) {
+        let videoURLs = urls.filter { isVideo($0) }
+        guard !videoURLs.isEmpty else { return }
+        isPreparing = true
+        Task {
+            defer { isPreparing = false }
+            for url in videoURLs {
+                do {
+                    let draft = try await model.importFile(url)
+                    importQueue.append(draft)
+                } catch {
+                    importError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func isVideo(_ url: URL) -> Bool {
+        guard let type = UTType(filenameExtension: url.pathExtension.lowercased()) else { return false }
+        return type.conforms(to: .movie) || type.conforms(to: .video)
     }
 
     // MARK: Content
@@ -269,6 +416,7 @@ struct LibraryView: View {
             isRenaming: renamingID == item.id,
             progress: item.clip.flatMap { model.uploadProgress[$0.id] },
             isRegenerating: item.clip.map { model.regenerating.contains($0.id) } ?? false,
+            displayStatus: item.clip.map { library.displayStatus(for: $0) },
             renameText: $renameText,
             fieldFocused: $renameFieldFocused,
             loader: model.thumbnails,
@@ -285,7 +433,9 @@ struct LibraryView: View {
                 moveDropped(ids, to: folder.id); return true
             }
         case .clip(let clip):
-            cell.draggable(clip.id.uuidString)
+            cell.draggable(clip.id.uuidString) {
+                ClipDragPreview(image: model.thumbnails.cachedImage(for: clip.id))
+            }
         }
     }
 
@@ -301,12 +451,14 @@ struct LibraryView: View {
             items: items,
             subfolders: library.subfolders,
             regenerating: model.regenerating,
+            displayStatus: { library.displayStatus(for: $0) },
             selection: $selection,
             sortOrder: sortOrderBinding,
             onOpen: open,
             onRename: { item, name in commitRename(item: item, newName: name) },
             onMove: moveDropped,
             onPreview: { previewClip = $0 },
+            onMarkPosted: { clips in Task { await model.markPosted(clips) } },
             onRegenerate: { clips in Task { await model.regenerateThumbnails(for: clips) } },
             onDeleteFolder: { folder in Task { await library.deleteFolder(folder) } },
             onDeleteClips: { clips in requestDelete(clips) }
@@ -375,6 +527,14 @@ struct LibraryView: View {
         case .clip(let clip):
             Button("Preview") { previewClip = clip }
                 .disabled(!clip.isPlayable)
+            Button("Schedule…") { schedulingClip = clip }
+                .disabled(!clip.isPlayable)
+            let postedTargets = markPostedTargets(for: clip)
+            if !postedTargets.isEmpty {
+                Button(postedTargets.count > 1 ? "Mark \(postedTargets.count) as Posted" : "Mark as Posted") {
+                    Task { await model.markPosted(postedTargets) }
+                }
+            }
             Button("Rename") { beginRename(item) }
             Button(regenerateTitle) {
                 let clips = regenerateTargets(for: clip)
@@ -398,6 +558,14 @@ struct LibraryView: View {
         selectedClips.contains(where: { $0.id == clip.id }) ? selectedClips : [clip]
     }
 
+    /// Clips a "Mark as Posted" applies to: within the selection (if the
+    /// clicked clip is part of it), every clip that still has a planned
+    /// schedule; otherwise just the clicked clip when it qualifies.
+    private func markPostedTargets(for clip: Clip) -> [Clip] {
+        let base = selectedClips.contains(where: { $0.id == clip.id }) ? selectedClips : [clip]
+        return base.filter { library.displayStatus(for: $0) == .scheduled }
+    }
+
     @ViewBuilder
     private func moveMenu(for clip: Clip) -> some View {
         Menu("Move to") {
@@ -415,8 +583,9 @@ struct LibraryView: View {
         ContentUnavailableView {
             Label("Nothing here yet", systemImage: "square.grid.2x2")
         } description: {
-            Text("Upload a video, or create a folder to organize your clips.")
+            Text("Drag videos in from Finder, or create a folder to organize your clips.")
         } actions: {
+            Button("Add Videos…") { isChoosingFile = true }
             Button("New Folder") { isCreatingFolder = true }
         }
     }
@@ -607,6 +776,28 @@ struct LibraryView: View {
 
 }
 
+/// Cursor-attached preview while dragging a clip: its poster thumbnail.
+private struct ClipDragPreview: View {
+    let image: NSImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } else {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6).fill(.quaternary)
+                    Image(systemName: "film").foregroundStyle(.secondary)
+                }
+            }
+        }
+        .frame(width: 140, height: 140 * 9 / 16)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+}
+
 // MARK: - Grid cell (ported from VideoTag's ClipCardView)
 
 private struct GridCell: View {
@@ -615,6 +806,8 @@ private struct GridCell: View {
     let isRenaming: Bool
     let progress: Double?
     let isRegenerating: Bool
+    /// The clip's lifecycle tag (nil for folders).
+    let displayStatus: ClipDisplayStatus?
     @Binding var renameText: String
     var fieldFocused: FocusState<Bool>.Binding
     let loader: ThumbnailLoader
@@ -627,6 +820,7 @@ private struct GridCell: View {
             thumbnail
                 .aspectRatio(16.0 / 9.0, contentMode: .fit)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(alignment: .topLeading) { statusBadge }
                 .overlay(alignment: .bottomTrailing) { durationBadge }
                 .overlay(alignment: .bottom) { progressBar }
                 .overlay { regenOverlay }
@@ -665,14 +859,28 @@ private struct GridCell: View {
                 .onSubmit { commitRename() }
                 .onExitCommand { cancelRename() }
         } else {
-            HStack(spacing: 5) {
-                if let clip = item.clip { statusDot(clip.status) }
-                Text(item.name)
-                    .font(.callout)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+            Text(item.name)
+                .font(.callout)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .padding(.horizontal, 2)
+        }
+    }
+
+    /// The clip's status tag (Uploading / Scheduled / Posted / …) as a small
+    /// capsule on the thumbnail, styled like the duration badge.
+    @ViewBuilder
+    private var statusBadge: some View {
+        if let status = displayStatus {
+            HStack(spacing: 4) {
+                Circle().fill(status.color).frame(width: 6, height: 6)
+                Text(status.label)
             }
-            .padding(.horizontal, 2)
+            .font(.caption2.weight(.medium))
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(.black.opacity(0.65), in: Capsule())
+            .foregroundStyle(.white)
+            .padding(5)
         }
     }
 
@@ -707,21 +915,6 @@ private struct GridCell: View {
         }
     }
 
-    private func statusDot(_ status: ClipStatus) -> some View {
-        Circle()
-            .fill(Self.color(for: status))
-            .frame(width: 7, height: 7)
-            .help(status.rawValue.capitalized)
-    }
-
-    private static func color(for status: ClipStatus) -> Color {
-        switch status {
-        case .ingesting: return .orange
-        case .uploading: return .blue
-        case .ready: return .green
-        case .failed: return .red
-        }
-    }
 }
 
 // MARK: - Skimming thumbnail (ported from VideoTag's ClipThumbnailView)
@@ -791,6 +984,11 @@ private struct ClipThumbnail: View {
             guard let key = skimKey else { return }
             if let frame = await skim.frame(for: clip, key: key) { skimImage = frame }
         }
+        // Resolve the stream URL and open the asset as soon as the card is on
+        // screen, so the first hover doesn't wait on that round trip.
+        .task(id: clip.id) {
+            if canSkim { await skim.warm(for: clip) }
+        }
     }
 
     @ViewBuilder
@@ -816,8 +1014,9 @@ private struct ClipThumbnail: View {
 
 // MARK: - Full-size preview
 
-/// Full-size video preview backed by a presigned R2 stream URL.
-private struct ClipPreviewView: View {
+/// Full-size video preview backed by a presigned R2 stream URL. Also used by
+/// the schedule pane's day-detail rows.
+struct ClipPreviewView: View {
     let clip: Clip
     let model: AppModel
 

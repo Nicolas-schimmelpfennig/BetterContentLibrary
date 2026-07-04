@@ -112,6 +112,13 @@ public enum ClipDisplayStatus: String, Sendable, CaseIterable {
         case .failed: return BCLTheme.error
         }
     }
+
+    /// The statuses a library filter offers — everything `derive` can actually
+    /// produce (`downloaded` isn't derived yet, so filtering by it would only
+    /// ever be empty).
+    public static var libraryFilterCases: [ClipDisplayStatus] {
+        allCases.filter { $0 != .downloaded }
+    }
 }
 
 public extension ScheduleStatus {

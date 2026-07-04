@@ -28,15 +28,23 @@ struct LibraryScreen: View {
     @State private var isConfirmingClipDelete = false
     @State private var pendingFolderDeletion: Folder?
 
+    /// Narrows the library to clips whose status tag matches (session-scoped).
+    @State private var statusFilter: ClipDisplayStatus?
+
     private var library: LibraryModel { model.library }
     private var layout: LibraryLayout { LibraryLayout(rawValue: layoutRaw) ?? .grid }
     private var sortKey: LibrarySortKey { LibrarySortKey(rawValue: sortKeyRaw) ?? .dateAdded }
 
     /// Folders first (sorted among themselves), then clips — like the Mac app.
+    /// A status filter narrows the clips; folders stay visible for navigation.
     private var entries: [LibraryEntry] {
         let comparator = sortKey.comparator(order: sortAscending ? .forward : .reverse)
         let folders = library.subfolders.map(LibraryEntry.folder).sorted(using: comparator)
-        let clips = library.items.map(LibraryEntry.clip).sorted(using: comparator)
+        var clipItems = library.items
+        if let statusFilter {
+            clipItems = clipItems.filter { library.displayStatus(for: $0) == statusFilter }
+        }
+        let clips = clipItems.map(LibraryEntry.clip).sorted(using: comparator)
         return folders + clips
     }
 
@@ -47,7 +55,7 @@ struct LibraryScreen: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar { toolbar }
                 .safeAreaInset(edge: .top, spacing: 0) { breadcrumbBar }
-                .task { await library.load() }
+                .task { await library.loadIfNeeded() }
                 .onChange(of: library.items) { Task { await model.backfillMissingThumbnails() } }
                 .refreshable { await library.load() }
                 .fullScreenCover(item: $previewClip) { ClipPreviewView(clip: $0, model: model) }
@@ -187,6 +195,23 @@ struct LibraryScreen: View {
                     Text("Ascending").tag(true)
                     Text("Descending").tag(false)
                 }
+                Divider()
+                Menu {
+                    Picker("Filter by Status", selection: $statusFilter) {
+                        Text("All Statuses").tag(ClipDisplayStatus?.none)
+                        ForEach(ClipDisplayStatus.libraryFilterCases, id: \.self) { status in
+                            Label {
+                                Text(status.label)
+                            } icon: {
+                                Image(systemName: "circle.fill")
+                                    .foregroundStyle(status.color)
+                            }
+                            .tag(Optional(status))
+                        }
+                    }
+                } label: {
+                    Label("Status", systemImage: statusFilter == nil ? "tag" : "tag.fill")
+                }
             } label: {
                 Image(systemName: "ellipsis.circle")
             }
@@ -246,6 +271,11 @@ struct LibraryScreen: View {
         case .clip(let clip):
             Button { previewClip = clip } label: { Label("Preview", systemImage: "play") }
                 .disabled(!clip.isPlayable)
+            if library.displayStatus(for: clip) == .scheduled {
+                Button { Task { await model.markPosted([clip]) } } label: {
+                    Label("Mark as Posted", systemImage: "checkmark.circle")
+                }
+            }
             Button { beginRename(entry) } label: { Label("Rename", systemImage: "pencil") }
             Button { Task { await model.regenerateThumbnail(for: clip) } } label: {
                 Label("Regenerate Thumbnail", systemImage: "arrow.clockwise")
@@ -353,10 +383,29 @@ private struct LibraryGridCell: View {
             thumbnail
                 .aspectRatio(16.0 / 9.0, contentMode: .fit)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(alignment: .topLeading) { statusBadge }
                 .overlay(alignment: .bottomTrailing) { durationBadge }
                 .overlay(alignment: .bottom) { progressBar }
                 .overlay { regenOverlay }
             nameRow
+        }
+    }
+
+    /// The clip's status tag (Uploading / Scheduled / Posted / …) as a small
+    /// capsule on the thumbnail, styled like the duration badge.
+    @ViewBuilder
+    private var statusBadge: some View {
+        if let clip = entry.clip {
+            let status = model.library.displayStatus(for: clip)
+            HStack(spacing: 4) {
+                Circle().fill(status.color).frame(width: 6, height: 6)
+                Text(status.label)
+            }
+            .font(.caption2.weight(.medium))
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(.black.opacity(0.65), in: Capsule())
+            .foregroundStyle(.white)
+            .padding(5)
         }
     }
 
@@ -375,11 +424,11 @@ private struct LibraryGridCell: View {
     }
 
     private var nameRow: some View {
-        HStack(spacing: 5) {
-            if let clip = entry.clip { StatusDot(status: clip.status) }
-            Text(entry.name).font(.callout).lineLimit(1).truncationMode(.middle)
-        }
-        .padding(.horizontal, 2)
+        Text(entry.name)
+            .font(.callout)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .padding(.horizontal, 2)
     }
 
     @ViewBuilder
@@ -426,7 +475,15 @@ private struct LibraryRow: View {
                 .clipShape(RoundedRectangle(cornerRadius: 5))
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.name).lineLimit(1)
-                Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                HStack(spacing: 4) {
+                    if let clip = entry.clip {
+                        let status = model.library.displayStatus(for: clip)
+                        Text(status.label)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(status.color)
+                    }
+                    Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                }
             }
             Spacer()
             if let clip = entry.clip, model.regenerating.contains(clip.id) {
@@ -462,21 +519,3 @@ private struct LibraryRow: View {
     }
 }
 
-// MARK: - Status dot
-
-private struct StatusDot: View {
-    let status: ClipStatus
-
-    var body: some View {
-        Circle().fill(color).frame(width: 7, height: 7)
-    }
-
-    private var color: Color {
-        switch status {
-        case .ingesting: return .orange
-        case .uploading: return .blue
-        case .ready: return .green
-        case .failed: return .red
-        }
-    }
-}

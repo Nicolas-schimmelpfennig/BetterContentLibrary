@@ -61,6 +61,17 @@ public final class ThumbnailLoader {
         return image
     }
 
+    /// Synchronous, local-only lookup for contexts that can't await (e.g. a
+    /// drag-preview builder): memory cache first, then disk; never reaches R2.
+    public func cachedImage(for clipId: UUID) -> PlatformImage? {
+        let key = clipId.uuidString as NSString
+        if let cached = cache.object(forKey: key) { return cached }
+        guard let data = try? Data(contentsOf: fileURL(for: clipId)),
+              let image = PlatformImage(data: data) else { return nil }
+        cache.setObject(image, forKey: key)
+        return image
+    }
+
     /// Stores a freshly rendered poster (memory + disk) so it displays at once,
     /// without waiting on the R2 upload or a later download.
     public func store(_ jpeg: Data, for clipId: UUID) {
@@ -128,8 +139,13 @@ public final class AppModel {
                 await self?.schedule.load()
             }
         }
+        // Library badges derive from schedules too, so a schedule change on
+        // any device refreshes both panes.
         realtime.onSchedulesChange = { [weak self] in
-            Task { await self?.schedule.load() }
+            Task {
+                await self?.schedule.load()
+                await self?.library.load()
+            }
         }
         realtime.start()
     }
@@ -261,6 +277,18 @@ public final class AppModel {
     /// Regenerates thumbnails for several clips in sequence (bulk action).
     public func regenerateThumbnails(for clips: [Clip]) async {
         for clip in clips { await regenerateThumbnail(for: clip) }
+    }
+
+    /// Marks every planned schedule of the given clips as posted — the
+    /// library-side "I published it" — then refreshes the library so the
+    /// clips' status tags flip to Posted. (The calendar reloads inside
+    /// `ScheduleModel.markPosted`.)
+    public func markPosted(_ clips: [Clip]) async {
+        for clip in clips {
+            let planned = (library.schedulesByClip[clip.id] ?? []).filter { $0.status == .planned }
+            for item in planned { await schedule.markPosted(item.id) }
+        }
+        await library.load()
     }
 
     private func observeUploads() {

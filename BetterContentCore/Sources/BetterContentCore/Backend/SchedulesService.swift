@@ -64,6 +64,32 @@ public final class SchedulesService: Sendable {
             .value
     }
 
+    /// Rewrites every user-editable field of a schedule (the editor's save).
+    /// Optionals encode as explicit nulls so clearing a field persists.
+    public func update(
+        _ id: UUID,
+        clipId: UUID,
+        platform: Platform,
+        scheduledAt: Date,
+        caption: String?,
+        notes: String?,
+        notifyProfileId: UUID?
+    ) async throws {
+        let patch = EditPatch(
+            clip_id: clipId.uuidString,
+            platform: platform.rawValue,
+            scheduled_at: scheduledAt,
+            caption: caption,
+            notes: notes,
+            notify_profile_id: notifyProfileId?.uuidString
+        )
+        try await client
+            .from("schedules")
+            .update(patch)
+            .eq("id", value: id.uuidString)
+            .execute()
+    }
+
     /// Marks a schedule posted, recording when.
     public func markPosted(_ id: UUID, at date: Date = Date()) async throws {
         try await client
@@ -107,6 +133,31 @@ public final class SchedulesService: Sendable {
         let caption: String?
         let notes: String?
         let notify_profile_id: String?
+    }
+
+    private struct EditPatch: Encodable, Sendable {
+        let clip_id: String
+        let platform: String
+        let scheduled_at: Date
+        let caption: String?
+        let notes: String?
+        let notify_profile_id: String?
+
+        enum CodingKeys: String, CodingKey {
+            case clip_id, platform, scheduled_at, caption, notes, notify_profile_id
+        }
+
+        // Hand-rolled so nil optionals become JSON nulls; the synthesized
+        // conformance omits them, which would leave stale values in place.
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(clip_id, forKey: .clip_id)
+            try container.encode(platform, forKey: .platform)
+            try container.encode(scheduled_at, forKey: .scheduled_at)
+            try container.encode(caption, forKey: .caption)
+            try container.encode(notes, forKey: .notes)
+            try container.encode(notify_profile_id, forKey: .notify_profile_id)
+        }
     }
 
     private struct PostedPatch: Encodable, Sendable {
