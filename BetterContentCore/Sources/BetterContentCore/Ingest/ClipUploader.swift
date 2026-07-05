@@ -90,16 +90,21 @@ public final class ClipUploader: Sendable {
 
     /// Reads a dropped/picked file into an editable draft. Hashing and metadata
     /// extraction happen off the calling actor.
-    public func makeDraft(from fileURL: URL) async throws -> ClipDraft {
+    ///
+    /// `originalName` is the file's name as the user knows it — `fileURL`
+    /// usually points at a staged copy whose name carries a collision-avoiding
+    /// UUID prefix, which must never leak into the default title.
+    public func makeDraft(from fileURL: URL, originalName: String? = nil) async throws -> ClipDraft {
         let hash = try await Task.detached { try ContentHasher.sha256(of: fileURL) }.value
         let metadata = try await VideoIngest.metadata(of: fileURL)
         let captured = await VideoIngest.capturedDate(of: fileURL) ?? fileCreationDate(fileURL)
         let thumbnail = try? await VideoIngest.thumbnailJPEG(of: fileURL, duration: metadata.durationS)
         let fileSize = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init)
 
+        let displayName = originalName ?? fileURL.lastPathComponent
         return ClipDraft(
             fileURL: fileURL,
-            title: fileURL.deletingPathExtension().lastPathComponent,
+            title: (displayName as NSString).deletingPathExtension,
             orientation: metadata.orientation,
             capturedAt: captured,
             durationS: metadata.durationS,

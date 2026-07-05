@@ -14,9 +14,11 @@ import UniformTypeIdentifiers
 import BetterContentCore
 
 /// A video transferred out of the Photos picker, copied to an app-owned temp
-/// file so the shared importer can read it.
+/// file so the shared importer can read it. Keeps the export's own filename
+/// around so the default clip title isn't the temp copy's UUID-prefixed name.
 private struct PickedVideo: Transferable {
     let url: URL
+    let originalName: String
 
     static var transferRepresentation: some TransferRepresentation {
         FileRepresentation(contentType: .movie) { video in
@@ -26,7 +28,7 @@ private struct PickedVideo: Transferable {
                 .appendingPathComponent("\(UUID().uuidString)-\(received.file.lastPathComponent)")
             try? FileManager.default.removeItem(at: temp)
             try FileManager.default.copyItem(at: received.file, to: temp)
-            return PickedVideo(url: temp)
+            return PickedVideo(url: temp, originalName: received.file.lastPathComponent)
         }
     }
 }
@@ -129,7 +131,7 @@ struct UploadScreen: View {
             for item in items {
                 do {
                     guard let video = try await item.loadTransferable(type: PickedVideo.self) else { continue }
-                    let draft = try await model.importFile(video.url)
+                    let draft = try await model.importFile(video.url, originalName: video.originalName)
                     queue.append(draft)
                 } catch {
                     errorMessage = error.localizedDescription

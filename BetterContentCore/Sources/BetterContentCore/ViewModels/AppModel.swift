@@ -165,12 +165,18 @@ public final class AppModel {
         eventTask = nil
     }
 
-    public func importFile(_ source: URL) async throws -> ClipDraft {
+    /// Stages a picked/dropped file and reads it into an editable draft.
+    /// `originalName` overrides the filename used for the default title —
+    /// pass it when `source` itself is a renamed temp copy (Photos picker).
+    public func importFile(_ source: URL, originalName: String? = nil) async throws -> ClipDraft {
         let accessed = source.startAccessingSecurityScopedResource()
         defer { if accessed { source.stopAccessingSecurityScopedResource() } }
 
         let staged = try pendingUploads.stage(source)
-        return try await uploader.makeDraft(from: staged)
+        return try await uploader.makeDraft(
+            from: staged,
+            originalName: originalName ?? source.lastPathComponent
+        )
     }
 
     /// Confirms a draft and starts the upload through the selected storage
