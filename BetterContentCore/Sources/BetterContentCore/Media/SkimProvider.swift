@@ -24,7 +24,7 @@ public final class SkimProvider {
         let generator: AVAssetImageGenerator
     }
 
-    private let storage: StorageService
+    private let router: StorageRouter
     private let cache = NSCache<NSString, PlatformImage>()
 
     /// Live generators, bounded to `maxGenerators` with real least-recently-used
@@ -40,15 +40,16 @@ public final class SkimProvider {
     /// network fetch instead of firing it twice.
     private var pending: [UUID: Task<GeneratorBox?, Never>] = [:]
 
-    /// The presigned stream URL is valid for an hour server-side (see
+    /// R2's presigned stream URL is valid for an hour server-side (see
     /// `r2-sign`); cache comfortably inside that window so replaying or
     /// re-skimming a clip later in the session skips the round trip (auth +
     /// a DB lookup + presigning) that otherwise gates the very first frame.
+    /// Local file URLs (iCloud) never expire, so they cache indefinitely.
     private var streamURLs: [UUID: (url: URL, expiresAt: Date)] = [:]
-    private static let urlLifetime: TimeInterval = 45 * 60
+    private static let presignedLifetime: TimeInterval = 45 * 60
 
-    public init(storage: StorageService = StorageService()) {
-        self.storage = storage
+    public init(router: StorageRouter = StorageRouter()) {
+        self.router = router
         cache.countLimit = 1500
     }
 
@@ -129,14 +130,17 @@ public final class SkimProvider {
         return result
     }
 
-    /// Resolves (and caches) a clip's presigned stream URL, skipping the
-    /// network round-trip while a previously issued URL is still fresh.
+    /// Resolves (and caches) a clip's playback URL via its storage backend,
+    /// skipping the round-trip while a previously issued URL is still fresh.
     private func streamURL(for clip: Clip) async -> URL? {
         if let cached = streamURLs[clip.id], cached.expiresAt > Date() {
             return cached.url
         }
-        guard let url = try? await storage.streamURL(clipId: clip.id) else { return nil }
-        streamURLs[clip.id] = (url, Date().addingTimeInterval(Self.urlLifetime))
+        guard let url = try? await router.backend(for: clip).playbackURL(for: clip) else { return nil }
+        let expiresAt = clip.storageProvider == .r2
+            ? Date().addingTimeInterval(Self.presignedLifetime)
+            : Date.distantFuture
+        streamURLs[clip.id] = (url, expiresAt)
         return url
     }
 

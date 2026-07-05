@@ -19,5 +19,20 @@
 	<!-- Required for Sparkle to install updates from inside the app sandbox. -->
 	<key>SUEnableInstallerLauncherService</key>
 	<true/>
+
+	<!-- Makes the iCloud container's Documents folder visible in Finder/Files
+	     as "BetterContentLibrary", so users can see their stored clips. -->
+	<key>NSUbiquitousContainers</key>
+	<dict>
+		<key>iCloud.Nicolas.BetterContentLibrary</key>
+		<dict>
+			<key>NSUbiquitousContainerIsDocumentScopePublic</key>
+			<true/>
+			<key>NSUbiquitousContainerName</key>
+			<string>BetterContentLibrary</string>
+			<key>NSUbiquitousContainerSupportedFolderLevels</key>
+			<string>Any</string>
+		</dict>
+	</dict>
 </dict>
 </plist>

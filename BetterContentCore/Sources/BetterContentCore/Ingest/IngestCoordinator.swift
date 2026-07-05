@@ -91,7 +91,9 @@ public final class IngestCoordinator {
             let contentType = Self.contentType(forExtension: ext)
             let ticket = try await storage.requestUploadTicket(ext: ext, contentType: contentType)
 
-            try await clips.markUploading(id: clip.id, r2Key: ticket.key)
+            // This shelved watch-folder path is hard-wired to R2; route it
+            // through StorageRouter if it's ever revived.
+            try await clips.markUploading(id: clip.id, storageKey: ticket.key, provider: .r2)
             uploadProgress[clip.id] = 0
             uploader.enqueue(
                 fileURL: fileURL,

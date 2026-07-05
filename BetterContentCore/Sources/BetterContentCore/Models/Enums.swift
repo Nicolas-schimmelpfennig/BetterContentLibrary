@@ -27,6 +27,27 @@ public enum ClipOrientation: String, Codable, Sendable, CaseIterable {
     case square
 }
 
+/// Where a clip's video/thumbnail bytes live. Mirrors the text values allowed
+/// by `clips.storage_provider`. Supabase stays the catalog either way — this
+/// only decides who serves the bytes.
+public enum StorageProvider: String, Codable, Sendable, CaseIterable {
+    /// Cloudflare R2 via the `r2-sign` edge function — org-shared storage.
+    case r2
+    /// The uploader's iCloud Drive — personal storage, reachable only on
+    /// devices signed into the same Apple ID.
+    case iCloudDrive = "icloud"
+    /// The uploader's Google Drive — personal storage (backend not built yet).
+    case googleDrive = "gdrive"
+
+    public var displayName: String {
+        switch self {
+        case .r2: return "BetterContent Cloud"
+        case .iCloudDrive: return "iCloud Drive"
+        case .googleDrive: return "Google Drive"
+        }
+    }
+}
+
 /// Target posting platform. Mirrors the `platform` Postgres enum.
 public enum Platform: String, Codable, Sendable, CaseIterable {
     case instagram

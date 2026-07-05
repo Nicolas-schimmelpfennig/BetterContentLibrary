@@ -47,6 +47,9 @@ struct SettingsView: View {
 
                 PlatformSettingsView()
                     .tabItem { Label("Platforms", systemImage: "square.grid.2x2") }
+
+                StorageSettingsView()
+                    .tabItem { Label("Storage", systemImage: "externaldrive.badge.icloud") }
             }
 
             Text(AppVersion.display)
@@ -55,6 +58,73 @@ struct SettingsView: View {
                 .padding(.bottom, 8)
         }
         .frame(width: 460, height: 380)
+    }
+}
+
+/// Where NEW uploads store their video bytes. Existing clips keep playing
+/// from wherever theirs already live (each records its provider), so
+/// switching never breaks the library.
+private struct StorageSettingsView: View {
+    @AppStorage(SettingsKey.storageProvider) private var providerRaw = StorageProvider.r2.rawValue
+
+    /// Checked on appear — `ubiquityIdentityToken` is a cheap main-thread read.
+    @State private var iCloudAvailable = false
+
+    private var provider: StorageProvider {
+        StorageProvider(rawValue: providerRaw) ?? .r2
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                Picker("Store new uploads in", selection: providerBinding) {
+                    Text("BetterContent Cloud").tag(StorageProvider.r2)
+                    Text("iCloud Drive").tag(StorageProvider.iCloudDrive)
+                    Text("Google Drive (coming soon)").tag(StorageProvider.googleDrive)
+                }
+                .pickerStyle(.radioGroup)
+            } footer: {
+                Text("Applies to new uploads only — existing clips keep playing from where they are.")
+            }
+
+            Section {
+                switch provider {
+                case .r2:
+                    LabeledContent("BetterContent Cloud") {
+                        Text("Included during the alpha").foregroundStyle(.secondary)
+                    }
+                    Text("Shared cloud storage: everyone in your team can view and download these clips.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                case .iCloudDrive:
+                    LabeledContent("iCloud status") {
+                        Label(
+                            iCloudAvailable ? "Signed in" : "Not signed in",
+                            systemImage: iCloudAvailable ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+                        )
+                        .foregroundStyle(iCloudAvailable ? .green : .orange)
+                    }
+                    Text("Clips are stored in your iCloud Drive (visible in Finder under BetterContentLibrary) and count against your iCloud plan. Only devices signed into your Apple ID can play them — teammates will see the clip but not the video.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                case .googleDrive:
+                    EmptyView()
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear { iCloudAvailable = FileManager.default.ubiquityIdentityToken != nil }
+    }
+
+    /// Google Drive is visible but not selectable yet (backend lands later);
+    /// picking it bounces back to the current choice.
+    private var providerBinding: Binding<StorageProvider> {
+        Binding {
+            provider
+        } set: { newValue in
+            guard newValue != .googleDrive else { return }
+            providerRaw = newValue.rawValue
+        }
     }
 }
 

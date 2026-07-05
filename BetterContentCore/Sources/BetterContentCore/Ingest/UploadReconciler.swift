@@ -58,6 +58,16 @@ public final class UploadReconciler: @unchecked Sendable {
         }
     }
 
+    /// Resolves an upload that finished synchronously — a backend whose
+    /// `startVideoUpload` returned `.completed` (e.g. the iCloud copy landed).
+    /// Runs the same status write + registry release as background outcomes,
+    /// keeping this type the sole writer of terminal clip status.
+    public func resolveCompleted(clipId: UUID) async {
+        lock.withLock { _ = resolving.insert(clipId) }
+        await resolve(clipId: clipId, to: .ready)
+        lock.withLock { _ = resolving.remove(clipId) }
+    }
+
     /// Repairs state from a previous run. Call once per session, after sign-in
     /// (status writes go through RLS) and after `activate()`. Returns whether
     /// anything was marked failed.

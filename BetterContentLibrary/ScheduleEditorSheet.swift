@@ -215,7 +215,7 @@ struct ScheduleEditorSheet: View {
         guard let clip = selectedClip else { return "" }
         var parts: [String] = []
         if let w = clip.width, let h = clip.height { parts.append("\(w) × \(h)") }
-        if let ext = clip.r2Key.map({ ($0 as NSString).pathExtension }), !ext.isEmpty {
+        if let ext = clip.storageKey.map({ ($0 as NSString).pathExtension }), !ext.isEmpty {
             parts.append(ext.uppercased())
         }
         if let size = clip.fileSize {

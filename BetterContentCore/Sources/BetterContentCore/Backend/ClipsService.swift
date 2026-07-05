@@ -57,10 +57,14 @@ public final class ClipsService: Sendable {
         ))
     }
 
-    /// Records the R2 key and moves the clip into the uploading state, right
-    /// before the background upload starts.
-    public func markUploading(id: UUID, r2Key: String) async throws {
-        try await patch(id, UploadPatch(r2_key: r2Key, status: ClipStatus.uploading.rawValue))
+    /// Records the storage key + provider and moves the clip into the
+    /// uploading state, right before the transfer starts.
+    public func markUploading(id: UUID, storageKey: String, provider: StorageProvider) async throws {
+        try await patch(id, UploadPatch(
+            r2_key: storageKey,
+            storage_provider: provider.rawValue,
+            status: ClipStatus.uploading.rawValue
+        ))
     }
 
     /// Sets just the lifecycle status (e.g. `.ready` when an upload completes).
@@ -172,6 +176,7 @@ public final class ClipsService: Sendable {
 
     private struct UploadPatch: Encodable, Sendable {
         let r2_key: String
+        let storage_provider: String
         let status: String
     }
 

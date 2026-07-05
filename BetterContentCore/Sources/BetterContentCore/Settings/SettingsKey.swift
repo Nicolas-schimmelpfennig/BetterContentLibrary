@@ -29,6 +29,10 @@ public enum SettingsKey {
     /// scheduling UI (Settings → Platforms). Stored as the *hidden* set so a
     /// platform added in a future version shows up by default.
     public static let hiddenPlatforms = "hiddenPlatforms"
+
+    /// `StorageProvider` raw value that NEW uploads go to (device-level;
+    /// existing clips keep playing from wherever their bytes already live).
+    public static let storageProvider = "storageProvider"
 }
 
 public extension Platform {
