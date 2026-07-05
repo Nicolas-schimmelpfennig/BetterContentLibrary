@@ -59,6 +59,13 @@ struct LibraryScreen: View {
                 .onChange(of: library.items) { Task { await model.backfillMissingThumbnails() } }
                 .refreshable { await library.load() }
                 .fullScreenCover(item: $previewClip) { ClipPreviewView(clip: $0, model: model) }
+                // Upload/limit outcomes land in library.errorMessage (refused
+                // uploads, auto-removed clips, failed deletes) — surface them.
+                .alert("Library", isPresented: libraryMessageBinding) {
+                    Button("OK") { library.errorMessage = nil }
+                } message: {
+                    Text(library.errorMessage ?? "")
+                }
                 .alert("Rename", isPresented: renameAlertBinding) {
                     TextField("Name", text: $renameText)
                     Button("Cancel", role: .cancel) { renamingEntry = nil }
@@ -363,6 +370,9 @@ struct LibraryScreen: View {
     }
     private var renameAlertBinding: Binding<Bool> {
         Binding { renamingEntry != nil } set: { if !$0 { renamingEntry = nil } }
+    }
+    private var libraryMessageBinding: Binding<Bool> {
+        Binding { library.errorMessage != nil } set: { if !$0 { library.errorMessage = nil } }
     }
     private var folderDeleteBinding: Binding<Bool> {
         Binding { pendingFolderDeletion != nil } set: { if !$0 { pendingFolderDeletion = nil } }

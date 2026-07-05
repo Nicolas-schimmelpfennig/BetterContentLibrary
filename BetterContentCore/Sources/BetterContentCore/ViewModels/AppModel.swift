@@ -107,6 +107,7 @@ public final class AppModel {
     private let router = StorageRouter()
     private let clips = ClipsService()
     private let uploader: ClipUploader
+    private let evictor: StorageEvictionService
     private let pendingUploads = PendingUploadStore.shared
     private let realtime = RealtimeSync()
     private var eventTask: Task<Void, Never>?
@@ -125,6 +126,7 @@ public final class AppModel {
         self.thumbnails = ThumbnailLoader(router: router)
         self.skim = SkimProvider(router: router)
         self.uploader = ClipUploader(router: router)
+        self.evictor = StorageEvictionService(router: router)
 
         // Reconciliation first: registering the terminal observer drains any
         // outcomes the system replayed before sign-in, then the sweep resolves
@@ -173,8 +175,27 @@ public final class AppModel {
 
     /// Confirms a draft and starts the upload through the selected storage
     /// backend, landing it in whatever folder the library is currently viewing.
+    ///
+    /// Enforces the provider's storage limit first: old clips are auto-removed
+    /// per the Settings chain to make room, or — when the chain can't free
+    /// enough — the upload is refused before anything is deleted.
     public func upload(_ draft: ClipDraft) async {
         do {
+            let evicted = try await evictor.makeRoom(
+                incomingBytes: draft.fileSize ?? 0,
+                uploadedBy: profile.id
+            )
+            if !evicted.isEmpty {
+                for clip in evicted {
+                    thumbnails.invalidate(clipId: clip.id)
+                    uploadProgress[clip.id] = nil
+                }
+                // Deleting a clip cascades its schedules; refresh the calendar.
+                await schedule.load()
+                let titles = evicted.map { "“\($0.title)”" }.joined(separator: ", ")
+                library.errorMessage = "To stay under the \(router.currentProvider.limitGB) GB \(router.currentProvider.displayName) limit, \(evicted.count == 1 ? "an older clip was" : "\(evicted.count) older clips were") removed: \(titles)."
+            }
+
             let started = try await uploader.upload(
                 draft,
                 orgId: profile.orgId,

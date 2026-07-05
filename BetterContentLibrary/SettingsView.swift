@@ -57,18 +57,25 @@ struct SettingsView: View {
                 .foregroundStyle(.tertiary)
                 .padding(.bottom, 8)
         }
-        .frame(width: 460, height: 380)
+        .frame(width: 500, height: 560)
     }
 }
 
-/// Where NEW uploads store their video bytes. Existing clips keep playing
-/// from wherever theirs already live (each records its provider), so
-/// switching never breaks the library.
+/// Where NEW uploads store their video bytes, how much space each provider
+/// may use, and the auto-removal chain that keeps libraries under the limit.
+/// Existing clips keep playing from wherever theirs already live (each
+/// records its provider), so switching never breaks the library.
 private struct StorageSettingsView: View {
     @AppStorage(SettingsKey.storageProvider) private var providerRaw = StorageProvider.r2.rawValue
+    @AppStorage(SettingsKey.storageLimitGBR2) private var r2LimitGB = StorageProvider.defaultLimitGB
+    @AppStorage(SettingsKey.storageLimitGBICloud) private var iCloudLimitGB = StorageProvider.defaultLimitGB
+    @AppStorage(SettingsKey.evictionOrder) private var evictionOrderRaw
+        = EvictionCategory.serialize(EvictionCategory.defaultOrder)
 
     /// Checked on appear — `ubiquityIdentityToken` is a cheap main-thread read.
     @State private var iCloudAvailable = false
+    /// Bytes currently occupied per provider (org-wide; best-effort display).
+    @State private var usage: [StorageProvider: Int64] = [:]
 
     private var provider: StorageProvider {
         StorageProvider(rawValue: providerRaw) ?? .r2
@@ -111,9 +118,110 @@ private struct StorageSettingsView: View {
                     EmptyView()
                 }
             }
+
+            Section {
+                limitRow(for: .r2, limit: $r2LimitGB)
+                limitRow(for: .iCloudDrive, limit: $iCloudLimitGB)
+            } header: {
+                Text("Storage limits")
+            } footer: {
+                Text("When a new upload would go over a provider's limit, older clips are removed automatically per the order below — or the upload is refused if the allowed categories can't free enough.")
+            }
+
+            Section {
+                ForEach(Array(enabledOrder.enumerated()), id: \.element) { index, category in
+                    HStack(spacing: 10) {
+                        Toggle("", isOn: enabledBinding(category)).labelsHidden()
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("\(index + 1). \(category.displayName)")
+                            Text(category.detail).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button { move(category, by: -1) } label: { Image(systemName: "chevron.up") }
+                            .buttonStyle(.borderless)
+                            .disabled(index == 0)
+                        Button { move(category, by: 1) } label: { Image(systemName: "chevron.down") }
+                            .buttonStyle(.borderless)
+                            .disabled(index == enabledOrder.count - 1)
+                    }
+                }
+                ForEach(disabledCategories) { category in
+                    HStack(spacing: 10) {
+                        Toggle("", isOn: enabledBinding(category)).labelsHidden()
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(category.displayName).foregroundStyle(.secondary)
+                            Text("Never removed automatically").font(.caption).foregroundStyle(.tertiary)
+                        }
+                        Spacer()
+                    }
+                }
+            } header: {
+                Text("Automatically remove, in this order")
+            } footer: {
+                Text("Within each category the oldest clips go first. Clips with an upcoming scheduled post are never removed automatically.")
+            }
         }
         .formStyle(.grouped)
         .onAppear { iCloudAvailable = FileManager.default.ubiquityIdentityToken != nil }
+        .task { await loadUsage() }
+    }
+
+    // MARK: Limits & usage
+
+    private func limitRow(for provider: StorageProvider, limit: Binding<Int>) -> some View {
+        LabeledContent(provider.displayName) {
+            HStack(spacing: 10) {
+                if let used = usage[provider] {
+                    Text("\(ByteCountFormatter.string(fromByteCount: used, countStyle: .file)) used")
+                        .foregroundStyle(.secondary)
+                }
+                Stepper("\(limit.wrappedValue) GB", value: limit, in: 1...2000)
+                    .monospacedDigit()
+            }
+        }
+    }
+
+    /// Best-effort org-wide usage readout; silently absent when signed out.
+    private func loadUsage() async {
+        guard let all = try? await ClipsService().list(limit: 2000) else { return }
+        var totals: [StorageProvider: Int64] = [:]
+        for clip in all where clip.status == .ready || clip.status == .uploading {
+            totals[clip.storageProvider, default: 0] += clip.fileSize ?? 0
+        }
+        usage = totals
+    }
+
+    // MARK: Auto-removal chain editing
+
+    private var enabledOrder: [EvictionCategory] {
+        EvictionCategory.order(from: evictionOrderRaw)
+    }
+
+    private var disabledCategories: [EvictionCategory] {
+        EvictionCategory.allCases.filter { !enabledOrder.contains($0) }
+    }
+
+    private func enabledBinding(_ category: EvictionCategory) -> Binding<Bool> {
+        Binding {
+            enabledOrder.contains(category)
+        } set: { on in
+            var order = enabledOrder
+            if on {
+                if !order.contains(category) { order.append(category) }
+            } else {
+                order.removeAll { $0 == category }
+            }
+            evictionOrderRaw = EvictionCategory.serialize(order)
+        }
+    }
+
+    private func move(_ category: EvictionCategory, by delta: Int) {
+        var order = enabledOrder
+        guard let index = order.firstIndex(of: category) else { return }
+        let target = index + delta
+        guard order.indices.contains(target) else { return }
+        order.swapAt(index, target)
+        evictionOrderRaw = EvictionCategory.serialize(order)
     }
 
     /// Google Drive is visible but not selectable yet (backend lands later);

@@ -170,6 +170,13 @@ struct LibraryView: View {
         } message: {
             Text(importError ?? "")
         }
+        // Upload/limit outcomes land in library.errorMessage (refused uploads,
+        // auto-removed clips, failed deletes) — surface them.
+        .alert("Library", isPresented: libraryMessagePresented) {
+            Button("OK") { library.errorMessage = nil }
+        } message: {
+            Text(library.errorMessage ?? "")
+        }
         .sheet(item: $previewClip) { clip in
             ClipPreviewView(clip: clip, model: model)
         }
@@ -339,6 +346,13 @@ struct LibraryView: View {
         Binding(
             get: { importError != nil },
             set: { if !$0 { importError = nil } }
+        )
+    }
+
+    private var libraryMessagePresented: Binding<Bool> {
+        Binding(
+            get: { library.errorMessage != nil },
+            set: { if !$0 { library.errorMessage = nil } }
         )
     }
 
