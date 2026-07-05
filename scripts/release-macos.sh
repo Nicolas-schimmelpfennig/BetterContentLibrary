@@ -118,6 +118,10 @@ if ! gh release view "$FEED_TAG" --repo "$REPO" >/dev/null 2>&1; then
         --title "App Updates" \
         --notes "Rolling Sparkle update feed for the macOS app. Assets here are consumed by in-app auto-update; grab the newest zip for a first install."
 fi
-gh release upload "$FEED_TAG" "$ZIP" updates/appcast.xml --repo "$REPO" --clobber
+# Deltas too: generate_appcast writes binary diffs between the new version
+# and each prior one, and the appcast references them — an unuploaded delta
+# means a 404 and a fallback to the full download on every update.
+shopt -s nullglob
+gh release upload "$FEED_TAG" "$ZIP" updates/appcast.xml updates/*.delta --repo "$REPO" --clobber
 
 echo "==> Done. $VERSION is live on the update feed."
