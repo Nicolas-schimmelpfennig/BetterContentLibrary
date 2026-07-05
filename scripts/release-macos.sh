@@ -71,11 +71,15 @@ if [[ -z "$SPARKLE_BIN" ]]; then
 fi
 
 echo "==> Archiving $VERSION (build $BUILD)"
+# -allowProvisioning*: the iCloud entitlements require provisioning profiles
+# (plain sandbox didn't); these flags let xcodebuild create/refresh them.
 xcodebuild -project BetterContentLibrary.xcodeproj \
     -scheme BetterContentLibrary \
     -configuration Release \
     -destination 'generic/platform=macOS' \
     -archivePath "$ARCHIVE" \
+    -allowProvisioningUpdates \
+    -allowProvisioningDeviceRegistration \
     MARKETING_VERSION="$VERSION" \
     CURRENT_PROJECT_VERSION="$BUILD" \
     archive | tail -2
@@ -84,7 +88,8 @@ echo "==> Exporting with Developer ID signing"
 xcodebuild -exportArchive \
     -archivePath "$ARCHIVE" \
     -exportPath "$EXPORT_DIR" \
-    -exportOptionsPlist scripts/ExportOptions.plist | tail -2
+    -exportOptionsPlist scripts/ExportOptions.plist \
+    -allowProvisioningUpdates | tail -2
 
 APP="$EXPORT_DIR/BetterContentLibrary.app"
 [[ -d "$APP" ]] || { echo "error: export produced no app at $APP" >&2; exit 1; }
