@@ -18,6 +18,16 @@ on any Mac), zips it, signs it with the EdDSA key, regenerates
 `appcast.xml`, and uploads both to the `updates` release. Users get the
 update within Sparkle's next check (or immediately via Check for Updates…).
 
+Finally it **removes the build leftovers** it just created — the
+`build/export-*` directory and the `build/*.xcarchive` — keeping only the
+version-tagged `updates/*.zip` (the shipped bytes) and, moved aside first,
+the `build/dSYMs/<version>/` symbols. This matters: every stray exported
+`.app` (and the copy nested inside each xcarchive) registers itself with
+LaunchServices, so Spotlight and "Open With" keep surfacing old versions as
+though they were still installed — the machine looks like updates never
+remove anything. After a release, the only installed copy is the one in
+`/Applications`, which Sparkle replaces in place on each update.
+
 The argument is the *marketing* version — any human-readable string
 ("0.2-alpha", "1.0"). Update ordering doesn't depend on it: Sparkle compares
 `CFBundleVersion`, which the script derives from the clock

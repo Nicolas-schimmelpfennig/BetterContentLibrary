@@ -124,4 +124,23 @@ fi
 shopt -s nullglob
 gh release upload "$FEED_TAG" "$ZIP" updates/appcast.xml updates/*.delta --repo "$REPO" --clobber
 
+# Leave no stray app copies behind: every exported .app (and the .app inside
+# each xcarchive) registers with LaunchServices, so Spotlight and "Open With"
+# keep offering old versions as if they were still installed — which also
+# means updates appear to never remove them. The only installed copy should
+# be /Applications; the shipped bytes live on in updates/<version>.zip.
+# dSYMs are rescued first: they exist nowhere but the archive, and without
+# them crash reports from the field can't be symbolicated.
+#
+# The release is already published above, so cleanup must never fail the run —
+# guard the copy and swallow errors (|| true) despite `set -e`.
+echo "==> Saving dSYMs and removing build leftovers"
+if [[ -d "$ARCHIVE/dSYMs" ]]; then
+    mkdir -p "build/dSYMs/$VERSION"
+    cp -R "$ARCHIVE/dSYMs/." "build/dSYMs/$VERSION/" || true
+fi
+# updates/old_updates is where generate_appcast parks zips that fell out of
+# the delta window; they're already uploaded to the GitHub release.
+rm -rf build/export-* build/*.xcarchive updates/old_updates || true
+
 echo "==> Done. $VERSION is live on the update feed."
