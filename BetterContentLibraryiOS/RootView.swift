@@ -12,17 +12,27 @@ struct RootView: View {
     @Environment(AuthService.self) private var auth
 
     var body: some View {
-        if auth.isAuthenticated {
-            if let profile = auth.currentProfile {
-                MainTabView(profile: profile)
-            } else {
-                VStack(spacing: 12) {
-                    ProgressView()
-                    Text("Loading your library…").foregroundStyle(.secondary)
+        Group {
+            if auth.isAuthenticated {
+                if let profile = auth.currentProfile {
+                    // Keyed on the org: joining/leaving one rebuilds the whole
+                    // session tree (AppModel, realtime, tabs) for the new org.
+                    MainTabView(profile: profile)
+                        .id(profile.orgId)
+                } else {
+                    VStack(spacing: 12) {
+                        ProgressView()
+                        Text("Loading your library…").foregroundStyle(.secondary)
+                    }
                 }
+            } else {
+                LoginView()
             }
-        } else {
-            LoginView()
+        }
+        .onOpenURL { url in
+            if let code = OrgInviteLink.code(from: url) {
+                DeepLinkCenter.shared.joinCode = code
+            }
         }
     }
 }

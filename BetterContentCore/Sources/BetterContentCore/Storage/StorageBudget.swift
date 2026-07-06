@@ -12,14 +12,19 @@
 import Foundation
 
 public extension SettingsKey {
-    /// Per-provider storage limits in whole GB (decimal, like storage plans).
+    /// DEPRECATED (migration 0014): the R2 limit is org-level policy now —
+    /// `organizations.storage_limit_gb`, admin-edited, shared by all members.
+    /// This device-local key is no longer read for enforcement.
     static let storageLimitGBR2 = "storageLimitGB.r2"
+    /// Per-device iCloud limit in whole GB (decimal, like storage plans).
+    /// iCloud stays device-local: the bytes live in the user's own container.
     static let storageLimitGBICloud = "storageLimitGB.icloud"
     static let storageLimitGBGoogleDrive = "storageLimitGB.gdrive"
 
-    /// Comma-joined `EvictionCategory` raw values, highest priority first.
-    /// A category absent from the list is never auto-removed. Key unset =
-    /// `EvictionCategory.defaultOrder`; set-but-empty = nothing evictable.
+    /// DEPRECATED (migration 0014): the eviction chain is org-level policy
+    /// now — `organizations.eviction_order` (the chain decides what gets
+    /// deleted from the shared bucket, so it can't differ per device). This
+    /// device-local key is no longer read for enforcement.
     static let evictionOrder = "evictionOrder"
 }
 
@@ -44,6 +49,18 @@ public extension StorageProvider {
     /// `ByteCountFormatter` count).
     var limitBytes: Int64 {
         Int64(limitGB) * 1_000_000_000
+    }
+}
+
+public extension Organization {
+    /// The org's shared R2 cap in bytes (decimal GB, matching storage plans).
+    var storageLimitBytes: Int64 {
+        Int64(max(1, storageLimitGB)) * 1_000_000_000
+    }
+
+    /// The org's eviction chain, parsed. Empty = auto-removal disabled.
+    var evictionOrder: [EvictionCategory] {
+        EvictionCategory.order(from: evictionOrderRaw)
     }
 }
 

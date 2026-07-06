@@ -102,10 +102,15 @@ public final class AppModel {
     /// Live upload progress (0...1) keyed by clip id.
     public private(set) var uploadProgress: [UUID: Double] = [:]
 
+    /// How many people share this org. Loaded shortly after sign-in; drives
+    /// the "multi-user orgs are R2-only" rule and Settings gating.
+    public private(set) var memberCount = 1
+
     /// Resolves the storage backend per clip (and for new uploads); one
     /// instance shared by everything in the session that moves bytes.
     private let router = StorageRouter()
     private let clips = ClipsService()
+    private let orgs = OrgService()
     private let uploader: ClipUploader
     private let evictor: StorageEvictionService
     private let pendingUploads = PendingUploadStore.shared
@@ -155,6 +160,8 @@ public final class AppModel {
             }
         }
         realtime.start()
+
+        Task { [weak self] in await self?.loadOrgContext() }
     }
 
     /// Releases the session's live resources (realtime channel, event stream).
@@ -163,6 +170,19 @@ public final class AppModel {
         realtime.stop()
         eventTask?.cancel()
         eventTask = nil
+    }
+
+    /// Loads the member count and enforces the team storage rule: a multi-user
+    /// org is R2-only, so a stale device-local iCloud selection is flipped
+    /// back to BetterContent Cloud. (A database trigger is the backstop for
+    /// anything that slips through the race window.)
+    private func loadOrgContext() async {
+        guard let members = try? await ProfilesService().listForCurrentOrg() else { return }
+        memberCount = max(1, members.count)
+        if memberCount > 1,
+           UserDefaults.standard.string(forKey: SettingsKey.storageProvider) == StorageProvider.iCloudDrive.rawValue {
+            UserDefaults.standard.set(StorageProvider.r2.rawValue, forKey: SettingsKey.storageProvider)
+        }
     }
 
     /// Stages a picked/dropped file and reads it into an editable draft.
@@ -183,13 +203,23 @@ public final class AppModel {
     /// backend, landing it in whatever folder the library is currently viewing.
     ///
     /// Enforces the provider's storage limit first: old clips are auto-removed
-    /// per the Settings chain to make room, or — when the chain can't free
-    /// enough — the upload is refused before anything is deleted.
+    /// per the eviction chain to make room, or — when the chain can't free
+    /// enough — the upload is refused before anything is deleted. The R2 limit
+    /// and the chain are org-level policy (admin-edited, shared by all
+    /// members), fetched fresh here; the iCloud limit stays device-local.
     public func upload(_ draft: ClipDraft) async {
         do {
+            let provider = router.currentProvider
+            let org = try await orgs.fetchCurrent()
+            let limitBytes = provider == .r2 ? org.storageLimitBytes : provider.limitBytes
+            let limitGB = Int(limitBytes / 1_000_000_000)
+
             let evicted = try await evictor.makeRoom(
                 incomingBytes: draft.fileSize ?? 0,
-                uploadedBy: profile.id
+                uploadedBy: profile.id,
+                provider: provider,
+                limitBytes: limitBytes,
+                order: org.evictionOrder
             )
             if !evicted.isEmpty {
                 for clip in evicted {
@@ -199,7 +229,7 @@ public final class AppModel {
                 // Deleting a clip cascades its schedules; refresh the calendar.
                 await schedule.load()
                 let titles = evicted.map { "“\($0.title)”" }.joined(separator: ", ")
-                library.errorMessage = "To stay under the \(router.currentProvider.limitGB) GB \(router.currentProvider.displayName) limit, \(evicted.count == 1 ? "an older clip was" : "\(evicted.count) older clips were") removed: \(titles)."
+                library.errorMessage = "To stay under the \(limitGB) GB \(provider.displayName) limit, \(evicted.count == 1 ? "an older clip was" : "\(evicted.count) older clips were") removed: \(titles)."
             }
 
             let started = try await uploader.upload(

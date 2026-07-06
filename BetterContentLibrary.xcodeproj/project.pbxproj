@@ -25,6 +25,13 @@
 			);
 			target = 372185602FEAA3CF008CF54E /* BetterContentLibrary */;
 		};
+		5A0000000000000000000005 /* Exceptions for "BetterContentLibraryiOS" folder in "BetterContentLibrary-iOS" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = D000000000000000000000B8 /* BetterContentLibrary-iOS */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -38,6 +45,9 @@
 		};
 		D000000000000000000000B4 /* BetterContentLibraryiOS */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				5A0000000000000000000005 /* Exceptions for "BetterContentLibraryiOS" folder in "BetterContentLibrary-iOS" target */,
+			);
 			path = BetterContentLibraryiOS;
 			sourceTree = "<group>";
 		};
@@ -409,6 +419,7 @@
 				DEVELOPMENT_TEAM = 226AMQMFG9;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = BetterContentLibraryiOS/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = BetterContentLibrary;
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Save downloaded videos to your photo library.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -443,6 +454,7 @@
 				DEVELOPMENT_TEAM = 226AMQMFG9;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = BetterContentLibraryiOS/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = BetterContentLibrary;
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Save downloaded videos to your photo library.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;

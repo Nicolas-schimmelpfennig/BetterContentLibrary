@@ -19,6 +19,9 @@ final class DeepLinkCenter {
     static let shared = DeepLinkCenter()
     /// The calendar day to open in the Schedule tab (set from a notification tap).
     var scheduleDay: Date?
+    /// An org invite code from a `bettercontent://join` link, waiting for the
+    /// join sheet (cleared when the sheet is dismissed).
+    var joinCode: String?
 }
 
 /// Requests notification permission, registers for remote notifications, and

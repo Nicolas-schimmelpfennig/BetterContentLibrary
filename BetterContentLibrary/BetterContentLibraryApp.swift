@@ -33,7 +33,10 @@ struct BetterContentLibraryApp: App {
         }
 
         Settings {
+            // The Settings scene is separate from the WindowGroup, so it needs
+            // its own injection — the Org tab reads the signed-in profile.
             SettingsView()
+                .environment(auth)
         }
     }
 }

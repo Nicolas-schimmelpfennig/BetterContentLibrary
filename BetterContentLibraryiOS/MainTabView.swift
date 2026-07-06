@@ -33,7 +33,7 @@ struct MainTabView: View {
             ScheduleScreen(model: model)
                 .tabItem { Label("Schedule", systemImage: "calendar") }
                 .tag(Tab.schedule)
-            SettingsScreen(model: model)
+            SettingsScreen(model: model, profile: profile)
                 .tabItem { Label("Settings", systemImage: "gearshape") }
                 .tag(Tab.settings)
         }
@@ -44,6 +44,17 @@ struct MainTabView: View {
         .onChange(of: deepLink.scheduleDay) { _, day in
             if day != nil { selectedTab = .schedule }
         }
+        // An invite link opens the join flow right over whatever tab is up.
+        .sheet(isPresented: joinSheetBinding, onDismiss: { deepLink.joinCode = nil }) {
+            JoinOrgScreen(profile: profile, initialCode: deepLink.joinCode ?? "")
+        }
         .onDisappear { model.tearDown() }
+    }
+
+    private var joinSheetBinding: Binding<Bool> {
+        Binding(
+            get: { deepLink.joinCode != nil },
+            set: { if !$0 { deepLink.joinCode = nil } }
+        )
     }
 }

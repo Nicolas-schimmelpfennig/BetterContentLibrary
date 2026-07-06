@@ -62,6 +62,14 @@ public final class AuthService {
         try await client.auth.signOut()
     }
 
+    /// Re-reads the profile row for the signed-in user. Call after anything
+    /// that changes it outside the auth stream — joining or leaving an org,
+    /// a role change — so views keyed on the profile pick up the new state.
+    public func refreshProfile() async {
+        guard let session else { return }
+        await loadProfile(userId: session.user.id)
+    }
+
     private func loadProfile(userId: UUID) async {
         isLoadingProfile = true
         defer { isLoadingProfile = false }

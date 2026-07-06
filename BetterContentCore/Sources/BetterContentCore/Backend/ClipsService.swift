@@ -72,6 +72,30 @@ public final class ClipsService: Sendable {
         try await patch(id, StatusPatch(status: status.rawValue))
     }
 
+    /// Atomically re-points a clip at bytes in another provider, deliberately
+    /// leaving `status` alone: storage migration uploads the new copy fully
+    /// before calling this, so the clip stays `ready` (and playable) the whole
+    /// time — unlike `markUploading`, which starts a fresh transfer lifecycle.
+    public func setStorage(
+        id: UUID,
+        storageKey: String,
+        provider: StorageProvider,
+        thumbKey: String? = nil
+    ) async throws {
+        if let thumbKey {
+            try await patch(id, RekeyWithThumbPatch(
+                r2_key: storageKey,
+                storage_provider: provider.rawValue,
+                thumb_key: thumbKey
+            ))
+        } else {
+            try await patch(id, RekeyPatch(
+                r2_key: storageKey,
+                storage_provider: provider.rawValue
+            ))
+        }
+    }
+
     /// Records the uploaded thumbnail's R2 key.
     public func setThumbKey(_ id: UUID, _ key: String) async throws {
         try await patch(id, ThumbPatch(thumb_key: key))
@@ -178,6 +202,17 @@ public final class ClipsService: Sendable {
         let r2_key: String
         let storage_provider: String
         let status: String
+    }
+
+    private struct RekeyPatch: Encodable, Sendable {
+        let r2_key: String
+        let storage_provider: String
+    }
+
+    private struct RekeyWithThumbPatch: Encodable, Sendable {
+        let r2_key: String
+        let storage_provider: String
+        let thumb_key: String
     }
 
     private struct StatusPatch: Encodable, Sendable {

@@ -20,6 +20,20 @@
 	<key>SUEnableInstallerLauncherService</key>
 	<true/>
 
+	<!-- Invite deep links: bettercontent://join?code=XXXXXXXX opens the join
+	     sheet (see OrgInviteLink + RootView.onOpenURL). -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>Nicolas.BetterContentLibrary.invite</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>bettercontent</string>
+			</array>
+		</dict>
+	</array>
+
 	<!-- Makes the iCloud container's Documents folder visible in Finder/Files
 	     as "BetterContentLibrary", so users can see their stored clips. -->
 	<key>NSUbiquitousContainers</key>

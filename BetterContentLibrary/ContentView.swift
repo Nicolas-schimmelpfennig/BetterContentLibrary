@@ -15,7 +15,10 @@ struct ContentView: View {
 
     var body: some View {
         if let profile = auth.currentProfile {
+            // Keyed on the org: joining/leaving one rebuilds the whole session
+            // tree (AppModel, realtime channel, both panes) for the new org.
             MainView(profile: profile)
+                .id(profile.orgId)
         } else {
             VStack(spacing: 12) {
                 ProgressView()
@@ -155,7 +158,7 @@ private struct MainView: View {
         ToolbarItem(placement: .primaryAction) {
             Menu {
                 Text(auth.currentProfile?.displayName ?? "Signed in")
-                Text(auth.currentProfile?.role.rawValue.capitalized ?? "")
+                Text(auth.currentProfile?.role.displayLabel ?? "")
                 Divider()
                 Button("Sign Out") {
                     Task { try? await auth.signOut() }

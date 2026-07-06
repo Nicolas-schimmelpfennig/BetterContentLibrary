@@ -1,11 +1,30 @@
 import Foundation
 
 /// A member's role within an organization. Mirrors the `user_role` Postgres enum.
+///
+/// The product's role model is just Admin/Member: `owner` displays as "Admin",
+/// `editor` as "Member"; `manager`/`viewer` exist in the schema but are unused.
+/// Sensitive org settings are enforced server-side for admins only.
 public enum UserRole: String, Codable, Sendable, CaseIterable {
     case owner
     case editor
     case manager
     case viewer
+
+    /// Whether this role can manage the org: rename it, set the shared storage
+    /// limit and eviction order, change roles, remove members, regenerate the
+    /// invite code. Mirrors `internal.is_org_admin()` in the database.
+    public var isAdmin: Bool { self == .owner }
+
+    /// The user-facing name for the role.
+    public var displayLabel: String {
+        switch self {
+        case .owner: return "Admin"
+        case .editor: return "Member"
+        case .manager: return "Manager"
+        case .viewer: return "Viewer"
+        }
+    }
 }
 
 /// The transfer state of a clip's bytes. Mirrors the `clip_status` Postgres enum.

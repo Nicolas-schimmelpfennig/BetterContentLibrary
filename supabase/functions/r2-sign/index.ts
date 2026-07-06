@@ -8,11 +8,15 @@
 //   { "action": "download", "clipId": "<uuid>" }
 //   { "action": "download", "kind": "thumb", "clipId": "<uuid>" }
 //   { "action": "delete",   "clipId": "<uuid>" }
+//   { "action": "delete_object", "key": "orgs/<org>/clips/<uuid>.mp4" }
 //
 // Response:
-//   upload   -> { "uploadUrl": "...", "key": "orgs/<org>/clips/<uuid>.mp4" }
-//   download -> { "downloadUrl": "...", "key": "..." }
-//   delete   -> { "ok": true }   (removes the R2 objects AND the clips row)
+//   upload        -> { "uploadUrl": "...", "key": "orgs/<org>/clips/<uuid>.mp4" }
+//   download      -> { "downloadUrl": "...", "key": "..." }
+//   delete        -> { "ok": true }   (removes the R2 objects AND the clips row)
+//   delete_object -> { "ok": true }   (removes ONE object by key, touches no rows —
+//                     the storage-migration cleanup primitive; the key must lie
+//                     under the caller's own orgs/<org>/ prefix)
 // Thumbnails live at a deterministic key: orgs/<org>/thumbs/<clipId>.jpg
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -159,6 +163,24 @@ Deno.serve(async (req) => {
     // and clip_tags rows cascade with it.
     const { error: rowErr } = await supabase.from("clips").delete().eq("id", clipId);
     if (rowErr) return json({ error: rowErr.message }, 500);
+    return json({ ok: true });
+  }
+
+  if (action === "delete_object") {
+    // Removes a single object, leaving all rows alone. Storage migration uses
+    // this to clean up a clip's OLD bytes after the row has been re-keyed to
+    // its new provider — the row-deleting "delete" action would destroy the
+    // freshly migrated clip. The org prefix check means clips brought in from
+    // another org (whose bytes still live under the old org's prefix) get a
+    // 403 here; callers treat that as "leave the orphan behind".
+    const key = payload.key;
+    if (typeof key !== "string" || key.length === 0) return json({ error: "key required" }, 400);
+    if (!key.startsWith(`orgs/${orgId}/`)) return json({ error: "Key outside caller's org" }, 403);
+
+    const res = await aws.fetch(`${R2_ENDPOINT}/${R2_BUCKET}/${key}`, { method: "DELETE" });
+    if (!res.ok && res.status !== 404) {
+      return json({ error: `R2 delete failed for ${key} (HTTP ${res.status})` }, 502);
+    }
     return json({ ok: true });
   }
 

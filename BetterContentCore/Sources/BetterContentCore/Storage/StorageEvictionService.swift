@@ -38,19 +38,29 @@ public final class StorageEvictionService: Sendable {
         self.router = router
     }
 
-    /// Makes room for `incomingBytes` in the current provider's budget.
+    /// Makes room for `incomingBytes` in the given provider's budget.
     ///
     /// Deletes evictable clips (oldest first within each enabled category, in
     /// chain order) until the upload fits, and returns what was removed. If
     /// even removing every eligible clip wouldn't fit the upload, throws
     /// `EvictionError` WITHOUT deleting anything.
     ///
+    /// The limit and eviction order are passed in by the caller: the R2 budget
+    /// is an org-level policy (shared bucket, shared rules, admin-edited)
+    /// fetched from the organization row, while the iCloud budget stays
+    /// device-local. No hidden UserDefaults reads happen here.
+    ///
     /// Scoping: R2 usage is org-wide (shared bucket); iCloud counts only the
     /// current user's clips — other members' bytes live in their own
     /// containers and can't be measured or removed from here.
-    public func makeRoom(incomingBytes: Int64, uploadedBy userId: UUID) async throws -> [Clip] {
-        let provider = router.currentProvider
-        let limit = provider.limitBytes
+    public func makeRoom(
+        incomingBytes: Int64,
+        uploadedBy userId: UUID,
+        provider: StorageProvider,
+        limitBytes: Int64,
+        order: [EvictionCategory]
+    ) async throws -> [Clip] {
+        let limit = limitBytes
 
         let all = try await clips.list(limit: 2000)
         let inProvider = all.filter {
@@ -67,7 +77,6 @@ public final class StorageEvictionService: Sendable {
         // Bucket the candidates. Only settled clips with a known, nonzero
         // size are worth deleting; upcoming-scheduled clips are protected.
         let schedulesByClip = Dictionary(grouping: try await schedules.listAll(), by: \.clipId)
-        let order = EvictionCategory.order(from: UserDefaults.standard.string(forKey: SettingsKey.evictionOrder))
         let now = Date()
 
         var buckets: [EvictionCategory: [Clip]] = [:]
@@ -87,7 +96,8 @@ public final class StorageEvictionService: Sendable {
             freed += clip.fileSize ?? 0
         }
         guard freed >= needed else {
-            throw EvictionError.wouldExceedLimit(provider: provider, limitGB: provider.limitGB, shortfall: needed - freed)
+            let limitGB = Int(limit / 1_000_000_000)
+            throw EvictionError.wouldExceedLimit(provider: provider, limitGB: limitGB, shortfall: needed - freed)
         }
 
         for clip in plan {

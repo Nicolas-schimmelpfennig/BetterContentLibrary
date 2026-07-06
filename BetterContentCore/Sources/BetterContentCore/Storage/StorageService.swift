@@ -102,6 +102,18 @@ public final class StorageService: Sendable {
         )
     }
 
+    /// Deletes a single R2 object by key, touching no database rows. This is
+    /// storage migration's cleanup step for a clip's OLD bytes after the row
+    /// was re-keyed to another provider — `deleteClip` would take the row (and
+    /// with it the freshly migrated clip) down too. The key must lie under the
+    /// caller's own org prefix; foreign-prefix keys are refused server-side.
+    public func deleteObject(key: String) async throws {
+        let _: DeleteResponse = try await client.functions.invoke(
+            "r2-sign",
+            options: FunctionInvokeOptions(body: DeleteObjectRequest(key: key))
+        )
+    }
+
     // MARK: Direct transfer to/from R2
 
     /// Uploads a local file to R2 using a presigned ticket. The presign signs
@@ -174,6 +186,11 @@ public final class StorageService: Sendable {
     private struct DeleteRequest: Encodable {
         let action = "delete"
         let clipId: String
+    }
+
+    private struct DeleteObjectRequest: Encodable {
+        let action = "delete_object"
+        let key: String
     }
 
     private struct DeleteResponse: Decodable {
