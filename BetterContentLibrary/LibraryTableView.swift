@@ -14,7 +14,9 @@ import BetterContentCore
 
 struct LibraryTableView: NSViewRepresentable {
     var items: [LibraryEntry]
-    var subfolders: [Folder]
+    /// Every folder in the org (with its full path) offered as a "Move to"
+    /// destination — not just the current folder's children.
+    var moveDestinations: [FolderDestination]
     var regenerating: Set<UUID>
     /// A clip's lifecycle tag (uploading / scheduled / posted / …), derived
     /// upstream so the table just renders it.
@@ -354,10 +356,11 @@ struct LibraryTableView: NSViewRepresentable {
             let item = NSMenuItem(title: "Move to", action: nil, keyEquivalent: "")
             let submenu = NSMenu()
             addItem(to: submenu, "Library (root)") { [weak self] in self?.parent.onMove(clipIDs, nil) }
-            if !parent.subfolders.isEmpty {
+            let destinations = parent.moveDestinations
+            if !destinations.isEmpty {
                 submenu.addItem(.separator())
-                for folder in parent.subfolders {
-                    addItem(to: submenu, folder.name) { [weak self] in self?.parent.onMove(clipIDs, folder.id) }
+                for dest in destinations {
+                    addItem(to: submenu, dest.path) { [weak self] in self?.parent.onMove(clipIDs, dest.folder.id) }
                 }
             }
             item.submenu = submenu

@@ -473,7 +473,7 @@ struct LibraryView: View {
     private var listView: some View {
         LibraryTableView(
             items: items,
-            subfolders: library.subfolders,
+            moveDestinations: library.moveDestinations,
             regenerating: model.regenerating,
             displayStatus: { library.displayStatus(for: $0) },
             selection: $selection,
@@ -614,10 +614,11 @@ struct LibraryView: View {
     private func moveMenu(for clip: Clip) -> some View {
         Menu("Move to") {
             Button("Library (root)") { moveDropped([clip.id.uuidString], to: nil) }
-            if !library.subfolders.isEmpty {
+            let destinations = library.moveDestinations
+            if !destinations.isEmpty {
                 Divider()
-                ForEach(library.subfolders) { folder in
-                    Button(folder.name) { moveDropped([clip.id.uuidString], to: folder.id) }
+                ForEach(destinations) { dest in
+                    Button(dest.path) { moveDropped([clip.id.uuidString], to: dest.folder.id) }
                 }
             }
         }

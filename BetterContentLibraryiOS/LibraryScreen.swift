@@ -295,8 +295,12 @@ struct LibraryScreen: View {
             .disabled(!clip.isPlayable || model.regenerating.contains(clip.id))
             Menu {
                 Button("Library (root)") { Task { await library.move(clipId: clip.id, to: nil) } }
-                ForEach(library.subfolders) { folder in
-                    Button(folder.name) { Task { await library.move(clipId: clip.id, to: folder.id) } }
+                let destinations = library.moveDestinations
+                if !destinations.isEmpty {
+                    Divider()
+                    ForEach(destinations) { dest in
+                        Button(dest.path) { Task { await library.move(clipId: clip.id, to: dest.folder.id) } }
+                    }
                 }
             } label: {
                 Label("Move to", systemImage: "folder")

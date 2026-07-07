@@ -22,6 +22,10 @@ public final class LibraryModel {
     /// Breadcrumb from root; the last element is the current folder (empty = root).
     public private(set) var path: [Folder] = []
     public private(set) var subfolders: [Folder] = []
+    /// Every folder in the org (all nesting levels), name-sorted — the source
+    /// for `moveDestinations`, so a clip can be moved anywhere, not just into
+    /// the current folder's children.
+    public private(set) var allFolders: [Folder] = []
     public private(set) var items: [Clip] = []
     /// Schedules per clip (org-wide), for deriving each clip's status tag
     /// (uploading / scheduled / posted / …) in the library.
@@ -36,6 +40,27 @@ public final class LibraryModel {
     public private(set) var hasLoaded = false
 
     public var currentFolder: Folder? { path.last }
+
+    /// Every folder in the org flattened depth-first (name-sorted at each level)
+    /// with its nesting depth and full path from the root (e.g. "Marketing / Q3").
+    /// This is the destination list for a "Move to" menu: it spans the whole org,
+    /// and the path disambiguates same-named folders under different parents.
+    public var moveDestinations: [FolderDestination] {
+        var childrenByParent: [UUID?: [Folder]] = [:]
+        for folder in allFolders {
+            childrenByParent[folder.parentId, default: []].append(folder)
+        }
+        var result: [FolderDestination] = []
+        func walk(parent: UUID?, depth: Int, prefix: String) {
+            for folder in childrenByParent[parent] ?? [] {
+                let path = prefix.isEmpty ? folder.name : "\(prefix) / \(folder.name)"
+                result.append(FolderDestination(folder: folder, depth: depth, path: path))
+                walk(parent: folder.id, depth: depth + 1, prefix: path)
+            }
+        }
+        walk(parent: nil, depth: 0, prefix: "")
+        return result
+    }
 
     /// Finder/Safari-style location history. Each entry is a full breadcrumb path;
     /// the current `path` is not in either stack.
@@ -55,9 +80,11 @@ public final class LibraryModel {
         defer { isLoading = false; hasLoaded = true }
         do {
             async let subs = folders.list(parent: currentFolder?.id)
+            async let all = folders.listAll(orgId: orgId)
             async let cl = clips.list(inFolder: currentFolder?.id)
             async let sch = schedules.listAll()
             subfolders = try await subs
+            allFolders = try await all
             items = try await cl
             schedulesByClip = Dictionary(grouping: try await sch, by: \.clipId)
         } catch {
@@ -176,4 +203,15 @@ public final class LibraryModel {
         }
     }
 
+}
+
+/// A folder presented as a "Move to" destination: the folder plus its nesting
+/// depth and full path from the root, so destinations across the whole org are
+/// distinguishable in a flat menu.
+public struct FolderDestination: Identifiable, Sendable, Hashable {
+    public let folder: Folder
+    public let depth: Int
+    public let path: String
+    public var id: UUID { folder.id }
+    public var name: String { folder.name }
 }

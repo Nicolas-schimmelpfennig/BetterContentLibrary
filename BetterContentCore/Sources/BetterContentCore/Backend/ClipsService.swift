@@ -227,7 +227,18 @@ public final class ClipsService: Sendable {
         let title: String
     }
 
+    /// Moving a clip to the library root means writing `folder_id = null`. The
+    /// synthesized `Encodable` would use `encodeIfPresent` and drop the key when
+    /// it's nil, leaving PostgREST an empty `{}` patch that changes nothing — so
+    /// we encode the optional explicitly to emit a real JSON `null`.
     private struct FolderPatch: Encodable, Sendable {
         let folder_id: String?
+
+        enum CodingKeys: String, CodingKey { case folder_id }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(folder_id, forKey: .folder_id)
+        }
     }
 }

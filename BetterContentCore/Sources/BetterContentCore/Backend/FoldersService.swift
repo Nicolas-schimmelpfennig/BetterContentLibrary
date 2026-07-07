@@ -20,6 +20,18 @@ public final class FoldersService: Sendable {
             .value
     }
 
+    /// Lists every folder in the org (all nesting levels), by name — used to
+    /// offer any folder as a move destination, not just the current one's children.
+    public func listAll(orgId: UUID) async throws -> [Folder] {
+        try await client
+            .from("folders")
+            .select()
+            .eq("org_id", value: orgId.uuidString)
+            .order("name", ascending: true)
+            .execute()
+            .value
+    }
+
     public func create(name: String, orgId: UUID, parentId: UUID?) async throws -> Folder {
         let row = InsertFolder(org_id: orgId.uuidString, parent_id: parentId?.uuidString, name: name)
         return try await client
