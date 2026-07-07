@@ -83,10 +83,22 @@ public final class LibraryModel {
             async let all = folders.listAll(orgId: orgId)
             async let cl = clips.list(inFolder: currentFolder?.id)
             async let sch = schedules.listAll()
-            subfolders = try await subs
-            allFolders = try await all
-            items = try await cl
-            schedulesByClip = Dictionary(grouping: try await sch, by: \.clipId)
+            // Await everything, then publish in one synchronous burst. Assigning
+            // as each fetch lands would briefly leave the new folder's subfolders
+            // paired with the previous folder's clips (or vice versa) — a window
+            // that can read as empty and flash the "Nothing here yet" state.
+            let (newSubfolders, newAllFolders, newItems, newSchedules) =
+                try await (subs, all, cl, sch)
+            subfolders = newSubfolders
+            allFolders = newAllFolders
+            items = newItems
+            schedulesByClip = Dictionary(grouping: newSchedules, by: \.clipId)
+        } catch is CancellationError {
+            // A superseded load — e.g. pull-to-refresh interrupted, or a newer
+            // navigation started before this finished. Not a real failure, and
+            // surfacing it pops a "Swift.CancellationError" alert; keep state.
+        } catch let error as URLError where error.code == .cancelled {
+            // Same thing when the cancellation comes up from the network layer.
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -108,6 +120,18 @@ public final class LibraryModel {
 
     public func open(_ folder: Folder) async {
         go(to: path + [folder])
+        await load()
+    }
+
+    /// Points the shared session state at `breadcrumb` (its last folder, or root
+    /// when empty) and reloads. The iOS browser is a native NavigationStack where
+    /// each level loads its own clips — so parents keep their contents during the
+    /// interactive back-swipe — and this keeps the shared model (uploads, status
+    /// badges, move destinations, realtime) in step with the folder on screen.
+    /// Unlike `navigate`/`open`, it sets the path outright without touching the
+    /// browser-style history, which the iOS stack doesn't use.
+    public func focus(on breadcrumb: [Folder]) async {
+        path = breadcrumb
         await load()
     }
 

@@ -2,9 +2,12 @@
 //  LibraryScreen.swift
 //  BetterContentLibrary (iOS)
 //
-//  The library browser: a grid or list of folders + clips with breadcrumb +
-//  back/forward navigation, sort, thumbnails (with drag-skim), preview, rename,
-//  move, delete, and regenerate — driven by the shared `AppModel`/`LibraryModel`.
+//  The library browser: a native NavigationStack that pushes one screen per
+//  folder — so iOS owns the interactive back-swipe and the animated pop, exactly
+//  like Files.app. Each level (`FolderLevelView`) loads its own folders + clips,
+//  so a parent keeps its contents on screen while you swipe back to it. Grid or
+//  list, sort, thumbnails (with drag-skim), preview, rename, move, delete, and
+//  regenerate — driven by the shared `AppModel`/`LibraryModel`.
 //
 
 import SwiftUI
@@ -15,9 +18,42 @@ private enum LibraryLayout: String { case grid, list }
 struct LibraryScreen: View {
     let model: AppModel
 
+    /// The pushed folders, root → current. Empty = library root. Driving the
+    /// NavigationStack with this is what gives us the native push/pop + swipe.
+    @State private var path: [Folder] = []
+
+    var body: some View {
+        NavigationStack(path: $path) {
+            FolderLevelView(folder: nil, model: model, path: $path)
+                .navigationDestination(for: Folder.self) { folder in
+                    FolderLevelView(folder: folder, model: model, path: $path)
+                }
+        }
+    }
+}
+
+// MARK: - One folder level
+
+/// A single level of the browser: the contents of `folder` (nil = root). It owns
+/// its own `subfolders`/`clips` so that, mid back-swipe, the revealed parent
+/// shows *its* contents rather than the child's. Cross-cutting state that's
+/// genuinely session-wide — status badges (from org schedules), move
+/// destinations, upload targeting, realtime — still lives on the shared model,
+/// which `activate()` keeps pointed at whichever level is on top.
+private struct FolderLevelView: View {
+    let folder: Folder?
+    let model: AppModel
+    @Binding var path: [Folder]
+
     @AppStorage("libraryLayoutiOS") private var layoutRaw = LibraryLayout.grid.rawValue
     @AppStorage("librarySortKey") private var sortKeyRaw = LibrarySortKey.dateAdded.rawValue
     @AppStorage("librarySortAsc") private var sortAscending = false
+
+    // This level's own contents.
+    @State private var subfolders: [Folder] = []
+    @State private var clips: [Clip] = []
+    @State private var isLoading = false
+    @State private var hasLoaded = false
 
     @State private var previewClip: Clip?
     @State private var renamingEntry: LibraryEntry?
@@ -28,91 +64,111 @@ struct LibraryScreen: View {
     @State private var isConfirmingClipDelete = false
     @State private var pendingFolderDeletion: Folder?
 
-    /// Narrows the library to clips whose status tag matches (session-scoped).
+    /// Narrows this level to clips whose status tag matches (session-scoped).
     @State private var statusFilter: ClipDisplayStatus?
+
+    private let folders = FoldersService()
+    private let clipsService = ClipsService()
 
     private var library: LibraryModel { model.library }
     private var layout: LibraryLayout { LibraryLayout(rawValue: layoutRaw) ?? .grid }
     private var sortKey: LibrarySortKey { LibrarySortKey(rawValue: sortKeyRaw) ?? .dateAdded }
 
+    /// This level is the one on top of the stack (root counts when nothing is
+    /// pushed). Only the top level drives the shared model and shows alerts.
+    private var isActive: Bool { folder == path.last }
+
     /// Folders first (sorted among themselves), then clips — like the Mac app.
     /// A status filter narrows the clips; folders stay visible for navigation.
     private var entries: [LibraryEntry] {
         let comparator = sortKey.comparator(order: sortAscending ? .forward : .reverse)
-        let folders = library.subfolders.map(LibraryEntry.folder).sorted(using: comparator)
-        var clipItems = library.items
+        let folderEntries = subfolders.map(LibraryEntry.folder).sorted(using: comparator)
+        var clipItems = clips
         if let statusFilter {
             clipItems = clipItems.filter { library.displayStatus(for: $0) == statusFilter }
         }
-        let clips = clipItems.map(LibraryEntry.clip).sorted(using: comparator)
-        return folders + clips
+        let clipEntries = clipItems.map(LibraryEntry.clip).sorted(using: comparator)
+        return folderEntries + clipEntries
     }
 
     var body: some View {
-        NavigationStack {
-            content
-                .navigationTitle(library.currentFolder?.name ?? "Library")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar { toolbar }
-                .safeAreaInset(edge: .top, spacing: 0) { breadcrumbBar }
-                .task { await library.loadIfNeeded() }
-                .onChange(of: library.items) { Task { await model.backfillMissingThumbnails() } }
-                .refreshable { await library.load() }
-                .fullScreenCover(item: $previewClip) { ClipPreviewView(clip: $0, model: model) }
-                // Upload/limit outcomes land in library.errorMessage (refused
-                // uploads, auto-removed clips, failed deletes) — surface them.
-                .alert("Library", isPresented: libraryMessageBinding) {
-                    Button("OK") { library.errorMessage = nil }
-                } message: {
-                    Text(library.errorMessage ?? "")
+        content
+            .navigationTitle(folder?.name ?? "Library")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { toolbar }
+            .task { await loadIfNeeded() }
+            // Whenever this level becomes the top one (push, or a pop back to it),
+            // point the shared model here so uploads, status, and move targets track it.
+            .task(id: isActive) { if isActive { await activate() } }
+            // Realtime/other-device changes reload the shared model; mirror that
+            // into this level's own lists (and backfill any missing posters).
+            .onChange(of: library.items) {
+                guard isActive else { return }
+                Task { await load(); await model.backfillMissingThumbnails() }
+            }
+            .refreshable { await load() }
+            .fullScreenCover(item: $previewClip) { ClipPreviewView(clip: $0, model: model) }
+            // Upload/limit outcomes land in library.errorMessage (refused uploads,
+            // auto-removed clips, failed deletes) — surface them on the top level only.
+            .alert("Library", isPresented: libraryMessageBinding) {
+                Button("OK") { library.errorMessage = nil }
+            } message: {
+                Text(library.errorMessage ?? "")
+            }
+            .alert("Rename", isPresented: renameAlertBinding) {
+                TextField("Name", text: $renameText)
+                Button("Cancel", role: .cancel) { renamingEntry = nil }
+                Button("Save") { commitRename() }
+            }
+            .alert("New Folder", isPresented: $isCreatingFolder) {
+                TextField("Name", text: $newFolderName)
+                Button("Cancel", role: .cancel) { newFolderName = "" }
+                Button("Create") {
+                    let name = newFolderName
+                    newFolderName = ""
+                    Task { await library.createFolder(named: name); await load() }
                 }
-                .alert("Rename", isPresented: renameAlertBinding) {
-                    TextField("Name", text: $renameText)
-                    Button("Cancel", role: .cancel) { renamingEntry = nil }
-                    Button("Save") { commitRename() }
+            }
+            .confirmationDialog(clipDeletePrompt, isPresented: $isConfirmingClipDelete, titleVisibility: .visible) {
+                Button("Delete", role: .destructive) {
+                    let clipsToDelete = pendingClipDeletion
+                    pendingClipDeletion = []
+                    Task { await model.deleteClips(clipsToDelete); await load() }
                 }
-                .alert("New Folder", isPresented: $isCreatingFolder) {
-                    TextField("Name", text: $newFolderName)
-                    Button("Cancel", role: .cancel) { newFolderName = "" }
-                    Button("Create") {
-                        let name = newFolderName
-                        newFolderName = ""
-                        Task { await library.createFolder(named: name) }
+                Button("Cancel", role: .cancel) { pendingClipDeletion = [] }
+            } message: {
+                Text("This permanently removes the video\(pendingClipDeletion.count == 1 ? "" : "s") from the library and storage. This can't be undone.")
+            }
+            .confirmationDialog(folderDeletePrompt, isPresented: folderDeleteBinding, titleVisibility: .visible) {
+                Button("Delete", role: .destructive) {
+                    if let folder = pendingFolderDeletion {
+                        Task { await library.deleteFolder(folder); await load() }
                     }
+                    pendingFolderDeletion = nil
                 }
-                .confirmationDialog(clipDeletePrompt, isPresented: $isConfirmingClipDelete, titleVisibility: .visible) {
-                    Button("Delete", role: .destructive) {
-                        let clips = pendingClipDeletion
-                        pendingClipDeletion = []
-                        Task { await model.deleteClips(clips) }
-                    }
-                    Button("Cancel", role: .cancel) { pendingClipDeletion = [] }
-                } message: {
-                    Text("This permanently removes the video\(pendingClipDeletion.count == 1 ? "" : "s") from the library and storage. This can't be undone.")
-                }
-                .confirmationDialog(folderDeletePrompt, isPresented: folderDeleteBinding, titleVisibility: .visible) {
-                    Button("Delete", role: .destructive) {
-                        if let folder = pendingFolderDeletion { Task { await library.deleteFolder(folder) } }
-                        pendingFolderDeletion = nil
-                    }
-                    Button("Cancel", role: .cancel) { pendingFolderDeletion = nil }
-                } message: {
-                    Text("Clips inside move back to the library root. Subfolders are deleted.")
-                }
-        }
+                Button("Cancel", role: .cancel) { pendingFolderDeletion = nil }
+            } message: {
+                Text("Clips inside move back to the library root. Subfolders are deleted.")
+            }
     }
 
     // MARK: Content
 
     @ViewBuilder
     private var content: some View {
-        if entries.isEmpty {
-            emptyState
-        } else {
+        if !entries.isEmpty {
             switch layout {
             case .grid: gridView
             case .list: listView
             }
+        } else if isLoading || !hasLoaded {
+            // Empty while (or before) loading means a cold load or a folder still
+            // resolving — show a spinner rather than flashing the empty state.
+            ProgressView()
+                .controlSize(.large)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            emptyState
         }
     }
 
@@ -182,12 +238,8 @@ struct LibraryScreen: View {
 
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
-        ToolbarItemGroup(placement: .topBarLeading) {
-            Button { navigate(library.goBack) } label: { Image(systemName: "chevron.backward") }
-                .disabled(!library.canGoBack)
-            Button { navigate(library.goForward) } label: { Image(systemName: "chevron.forward") }
-                .disabled(!library.canGoForward)
-        }
+        // No back/forward buttons: the NavigationStack supplies the native back
+        // button (and the left-edge swipe) automatically.
         ToolbarItemGroup(placement: .topBarTrailing) {
             Menu {
                 Picker("Layout", selection: layoutBinding) {
@@ -225,50 +277,13 @@ struct LibraryScreen: View {
         }
     }
 
-    // MARK: Breadcrumb
-
-    private var breadcrumbBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 4) {
-                crumb(title: "Library", folder: nil)
-                ForEach(library.path) { folder in
-                    Image(systemName: "chevron.compact.right")
-                        .font(.caption2).foregroundStyle(.tertiary)
-                    crumb(title: folder.name, folder: folder)
-                }
-                if library.isLoading { ProgressView().controlSize(.mini).padding(.leading, 4) }
-            }
-            .padding(.horizontal, 12)
-            .frame(height: 32)
-        }
-        .background(.bar)
-        .overlay(alignment: .bottom) { Divider() }
-    }
-
-    private func crumb(title: String, folder: Folder?) -> some View {
-        Button {
-            navigate { await library.navigate(to: folder) }
-        } label: {
-            HStack(spacing: 3) {
-                Image(systemName: folder == nil ? "house" : "folder").imageScale(.small)
-                Text(title).lineLimit(1)
-            }
-            .font(.subheadline)
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(folder == library.currentFolder ? .primary : .secondary)
-        .dropDestination(for: String.self) { ids, _ in
-            moveDropped(ids, to: folder?.id); return true
-        }
-    }
-
     // MARK: Context menu
 
     @ViewBuilder
     private func contextMenu(for entry: LibraryEntry) -> some View {
         switch entry {
         case .folder(let folder):
-            Button { navigate { await library.open(folder) } } label: { Label("Open", systemImage: "folder") }
+            Button { open(entry) } label: { Label("Open", systemImage: "folder") }
             Button { beginRename(entry) } label: { Label("Rename", systemImage: "pencil") }
             Divider()
             Button(role: .destructive) { pendingFolderDeletion = folder } label: {
@@ -279,27 +294,27 @@ struct LibraryScreen: View {
                 .disabled(!clip.isPlayable)
             let status = library.displayStatus(for: clip)
             if status == .scheduled || status == .ready {
-                Button { Task { await model.markPosted([clip]) } } label: {
+                Button { Task { await model.markPosted([clip]); await load() } } label: {
                     Label("Mark as Posted", systemImage: "checkmark.circle")
                 }
             }
             if status == .posted {
-                Button { Task { await model.reopen([clip]) } } label: {
+                Button { Task { await model.reopen([clip]); await load() } } label: {
                     Label("Reopen", systemImage: "arrow.uturn.backward.circle")
                 }
             }
             Button { beginRename(entry) } label: { Label("Rename", systemImage: "pencil") }
-            Button { Task { await model.regenerateThumbnail(for: clip) } } label: {
+            Button { Task { await model.regenerateThumbnail(for: clip); await load() } } label: {
                 Label("Regenerate Thumbnail", systemImage: "arrow.clockwise")
             }
             .disabled(!clip.isPlayable || model.regenerating.contains(clip.id))
             Menu {
-                Button("Library (root)") { Task { await library.move(clipId: clip.id, to: nil) } }
+                Button("Library (root)") { move(clip, to: nil) }
                 let destinations = library.moveDestinations
                 if !destinations.isEmpty {
                     Divider()
                     ForEach(destinations) { dest in
-                        Button(dest.path) { Task { await library.move(clipId: clip.id, to: dest.folder.id) } }
+                        Button(dest.path) { move(clip, to: dest.folder.id) }
                     }
                 }
             } label: {
@@ -312,23 +327,59 @@ struct LibraryScreen: View {
         }
     }
 
+    // MARK: Loading
+
+    private func loadIfNeeded() async {
+        guard !hasLoaded else { return }
+        await load()
+    }
+
+    /// Loads this level's own folders + clips. Both fetches are awaited before
+    /// publishing so the list never renders half-updated.
+    private func load() async {
+        isLoading = true
+        defer { isLoading = false; hasLoaded = true }
+        do {
+            async let subs = folders.list(parent: folder?.id)
+            async let cl = clipsService.list(inFolder: folder?.id)
+            let (newSubfolders, newClips) = try await (subs, cl)
+            subfolders = newSubfolders
+            clips = newClips
+        } catch is CancellationError {
+            // Superseded refresh/navigation — not a real failure.
+        } catch let error as URLError where error.code == .cancelled {
+        } catch {
+            library.errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Runs when this level reaches the top of the stack: sync the shared model
+    /// to it (so uploads land here and org-wide status/move data refresh) and
+    /// backfill any missing posters.
+    private func activate() async {
+        await library.focus(on: path)
+        await model.backfillMissingThumbnails()
+    }
+
     // MARK: Actions
 
     private func open(_ entry: LibraryEntry) {
         switch entry {
-        case .folder(let folder): navigate { await library.open(folder) }
+        case .folder(let folder): path.append(folder)   // native push
         case .clip(let clip): if clip.isPlayable { previewClip = clip }
         }
     }
 
-    /// Runs a navigation action (so callers don't each spell out the Task).
-    private func navigate(_ action: @escaping () async -> Void) {
-        Task { await action() }
+    private func move(_ clip: Clip, to folderId: UUID?) {
+        Task { await library.move(clipId: clip.id, to: folderId); await load() }
     }
 
     private func moveDropped(_ ids: [String], to folderId: UUID?) {
-        for raw in ids where UUID(uuidString: raw) != nil {
-            Task { await library.move(clipId: UUID(uuidString: raw)!, to: folderId) }
+        let uuids = ids.compactMap(UUID.init)
+        guard !uuids.isEmpty else { return }
+        Task {
+            for id in uuids { await library.move(clipId: id, to: folderId) }
+            await load()
         }
     }
 
@@ -356,9 +407,9 @@ struct LibraryScreen: View {
         guard !trimmed.isEmpty else { return }
         switch entry {
         case .folder(let folder) where trimmed != folder.name:
-            Task { await library.renameFolder(folder.id, to: trimmed) }
+            Task { await library.renameFolder(folder.id, to: trimmed); await load() }
         case .clip(let clip) where trimmed != clip.title:
-            Task { await library.renameClip(clip.id, to: trimmed) }
+            Task { await library.renameClip(clip.id, to: trimmed); await load() }
         default:
             break
         }
@@ -376,7 +427,7 @@ struct LibraryScreen: View {
         Binding { renamingEntry != nil } set: { if !$0 { renamingEntry = nil } }
     }
     private var libraryMessageBinding: Binding<Bool> {
-        Binding { library.errorMessage != nil } set: { if !$0 { library.errorMessage = nil } }
+        Binding { isActive && library.errorMessage != nil } set: { if !$0 { library.errorMessage = nil } }
     }
     private var folderDeleteBinding: Binding<Bool> {
         Binding { pendingFolderDeletion != nil } set: { if !$0 { pendingFolderDeletion = nil } }
@@ -537,4 +588,3 @@ private struct LibraryRow: View {
         }
     }
 }
-
