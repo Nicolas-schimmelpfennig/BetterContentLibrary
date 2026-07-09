@@ -67,12 +67,32 @@ final class PushManager {
         }
     }
 
-    /// Dev builds talk to APNs sandbox; release builds to production.
+    /// Which APNs gateway this device's token belongs to — "sandbox" or
+    /// "production". This is decided by the build's `aps-environment`
+    /// entitlement (i.e. the provisioning profile it was signed with), NOT the
+    /// Debug/Release config: a Release build signed with a development profile
+    /// still mints a *sandbox* token, so `#if DEBUG` gets it wrong and the
+    /// server ends up posting to the wrong gateway. Read the real value from
+    /// the embedded provisioning profile instead.
     static var environment: String {
-        #if DEBUG
+        #if targetEnvironment(simulator)
         return "sandbox"
         #else
-        return "production"
+        guard let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision"),
+              let data = try? Data(contentsOf: url),
+              // The profile is CMS-signed binary, but the embedded plist is
+              // plain text; ISO Latin-1 decodes every byte without throwing.
+              let text = String(data: data, encoding: .isoLatin1),
+              let range = text.range(of: "<key>aps-environment</key>") else {
+            // No embedded profile => App Store / TestFlight build => production.
+            return "production"
+        }
+        let after = text[range.upperBound...]
+        guard let open = after.range(of: "<string>"),
+              let close = after.range(of: "</string>") else {
+            return "production"
+        }
+        return after[open.upperBound..<close.lowerBound] == "development" ? "sandbox" : "production"
         #endif
     }
 }

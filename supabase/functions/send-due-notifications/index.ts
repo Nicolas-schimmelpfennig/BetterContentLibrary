@@ -100,15 +100,25 @@ function localTime(iso: string, tz: string | null): string {
   }
 }
 
-async function sendToDevice(
+const APNS_HOSTS = {
+  production: "api.push.apple.com",
+  sandbox: "api.sandbox.push.apple.com",
+} as const;
+type ApnsEnv = keyof typeof APNS_HOSTS;
+
+// APNs rejects a token sent to the wrong gateway with one of these reasons. A
+// device's recorded environment can be wrong (e.g. a dev-signed Release build
+// mints a sandbox token but the app labels it "production"), so on these we
+// retry the other gateway rather than giving up.
+const WRONG_GATEWAY_REASONS = new Set(["BadDeviceToken", "BadEnvironmentKeyInToken"]);
+
+async function postToGateway(
+  env: ApnsEnv,
   jwt: string,
-  device: { apns_token: string; environment: string },
+  token: string,
   payload: Record<string, unknown>,
-): Promise<boolean> {
-  const host = device.environment === "production"
-    ? "api.push.apple.com"
-    : "api.sandbox.push.apple.com";
-  const res = await fetch(`https://${host}/3/device/${device.apns_token}`, {
+): Promise<{ ok: boolean; status: number; reason: string | null }> {
+  const res = await fetch(`https://${APNS_HOSTS[env]}/3/device/${token}`, {
     method: "POST",
     headers: {
       "authorization": `bearer ${jwt}`,
@@ -119,8 +129,33 @@ async function sendToDevice(
     },
     body: JSON.stringify(payload),
   });
+  let reason: string | null = null;
   if (!res.ok) {
-    console.error(`APNs ${res.status} for ${device.apns_token.slice(0, 8)}…: ${await res.text()}`);
+    const text = await res.text();
+    try { reason = JSON.parse(text)?.reason ?? null; } catch { /* non-JSON body */ }
+    console.error(`APNs ${res.status} (${reason ?? "?"}) on ${env} for ${token.slice(0, 8)}…: ${text}`);
+  }
+  return { ok: res.ok, status: res.status, reason };
+}
+
+// deno-lint-ignore no-explicit-any
+async function sendToDevice(
+  admin: any,
+  jwt: string,
+  device: { id: string; apns_token: string; environment: string },
+  payload: Record<string, unknown>,
+): Promise<boolean> {
+  const primary: ApnsEnv = device.environment === "production" ? "production" : "sandbox";
+  const other: ApnsEnv = primary === "production" ? "sandbox" : "production";
+
+  let res = await postToGateway(primary, jwt, device.apns_token, payload);
+  if (!res.ok && res.reason && WRONG_GATEWAY_REASONS.has(res.reason)) {
+    res = await postToGateway(other, jwt, device.apns_token, payload);
+    // Retry succeeded → the stored environment was wrong. Correct it so future
+    // sends hit the right gateway first instead of always double-posting.
+    if (res.ok) {
+      await admin.from("devices").update({ environment: other }).eq("id", device.id);
+    }
   }
   return res.ok;
 }
@@ -171,7 +206,7 @@ Deno.serve(async (req) => {
   for (const s of due) {
     const { data: devices } = await admin
       .from("devices")
-      .select("apns_token, environment")
+      .select("id, apns_token, environment")
       .eq("profile_id", s.notify_profile_id);
 
     // deno-lint-ignore no-explicit-any
@@ -192,7 +227,7 @@ Deno.serve(async (req) => {
     };
 
     for (const device of devices ?? []) {
-      if (await sendToDevice(jwt, device, payload)) sent++;
+      if (await sendToDevice(admin, jwt, device, payload)) sent++;
     }
 
     // Stamp once so it never re-fires, even if the user had no registered device.
