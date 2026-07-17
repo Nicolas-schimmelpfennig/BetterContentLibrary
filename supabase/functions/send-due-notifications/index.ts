@@ -1,7 +1,18 @@
 // send-due-notifications — called every minute by pg_cron. Finds planned posts
 // coming up within the lead window (scheduled_at <= now + NOTIFY_LEAD_SECONDS,
 // not yet notified, with a notify target) and sends an APNs "time to post" push
-// to that user's devices, then stamps notified_at so each fires once.
+// to that user's devices.
+//
+// Delivery semantics (v7):
+//  - Pushes carry an apns-expiration of scheduled_at + 1h, so APNs stores and
+//    forwards to a device that's briefly offline instead of discarding.
+//  - notified_at is stamped only after at least one device send succeeds (or
+//    the target has no devices). Failed passes increment notify_attempts and
+//    retry next minute, giving up at MAX_NOTIFY_ATTEMPTS.
+//  - Rescheduling clears notified_at via DB trigger (migration 0015), so a
+//    moved post gets a fresh push at its new time.
+//  - Tokens APNs reports dead (Unregistered, or rejected by both gateways) are
+//    deleted from `devices` so they stop accumulating.
 //
 // Schedules more than STALE_AFTER_HOURS past are retired silently (stamped
 // without sending) so a backlog — e.g. cron downtime or rows edited into the
@@ -28,6 +39,11 @@ const APNS_BUNDLE_ID = Deno.env.get("APNS_BUNDLE_ID");
 // considered dead rather than due.
 const NOTIFY_LEAD_SECONDS = Number(Deno.env.get("NOTIFY_LEAD_SECONDS") ?? "900");
 const STALE_AFTER_HOURS = 24;
+
+// How many failed passes (one per cron minute) before a schedule is stamped
+// anyway, and how long past scheduled_at APNs should keep an undelivered push.
+const MAX_NOTIFY_ATTEMPTS = 10;
+const EXPIRY_GRACE_SECONDS = 3600;
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -117,6 +133,7 @@ async function postToGateway(
   jwt: string,
   token: string,
   payload: Record<string, unknown>,
+  expiration: number,
 ): Promise<{ ok: boolean; status: number; reason: string | null }> {
   const res = await fetch(`https://${APNS_HOSTS[env]}/3/device/${token}`, {
     method: "POST",
@@ -125,7 +142,9 @@ async function postToGateway(
       "apns-topic": APNS_BUNDLE_ID!,
       "apns-push-type": "alert",
       "apns-priority": "10",
-      "apns-expiration": "0",
+      // Store-and-forward: keep the push deliverable until it expires, so a
+      // device that's offline at send time still gets it when it reconnects.
+      "apns-expiration": String(expiration),
     },
     body: JSON.stringify(payload),
   });
@@ -144,17 +163,30 @@ async function sendToDevice(
   jwt: string,
   device: { id: string; apns_token: string; environment: string },
   payload: Record<string, unknown>,
+  expiration: number,
 ): Promise<boolean> {
   const primary: ApnsEnv = device.environment === "production" ? "production" : "sandbox";
   const other: ApnsEnv = primary === "production" ? "sandbox" : "production";
 
-  let res = await postToGateway(primary, jwt, device.apns_token, payload);
+  let res = await postToGateway(primary, jwt, device.apns_token, payload, expiration);
+
+  // 410 Unregistered: the token was valid for this gateway but the app is gone
+  // (uninstalled or replaced by a differently-signed build). Drop the row so
+  // dead tokens from old installs stop accumulating.
+  if (res.status === 410) {
+    await admin.from("devices").delete().eq("id", device.id);
+    return false;
+  }
+
   if (!res.ok && res.reason && WRONG_GATEWAY_REASONS.has(res.reason)) {
-    res = await postToGateway(other, jwt, device.apns_token, payload);
+    res = await postToGateway(other, jwt, device.apns_token, payload, expiration);
     // Retry succeeded → the stored environment was wrong. Correct it so future
     // sends hit the right gateway first instead of always double-posting.
     if (res.ok) {
       await admin.from("devices").update({ environment: other }).eq("id", device.id);
+    } else if (res.status === 410 || (res.reason && WRONG_GATEWAY_REASONS.has(res.reason))) {
+      // Rejected by both gateways: the token is dead everywhere. Delete it.
+      await admin.from("devices").delete().eq("id", device.id);
     }
   }
   return res.ok;
@@ -189,7 +221,7 @@ Deno.serve(async (req) => {
 
   const { data: due, error } = await admin
     .from("schedules")
-    .select("id, clip_id, platform, scheduled_at, timezone, notify_profile_id, clips(title)")
+    .select("id, clip_id, platform, scheduled_at, timezone, notify_profile_id, notify_attempts, clips(title)")
     .is("notified_at", null)
     .eq("status", "planned")
     .not("notify_profile_id", "is", null)
@@ -202,6 +234,7 @@ Deno.serve(async (req) => {
 
   const jwt = await apnsJwt();
   let sent = 0;
+  let retrying = 0;
 
   for (const s of due) {
     const { data: devices } = await admin
@@ -225,14 +258,33 @@ Deno.serve(async (req) => {
       clip_id: s.clip_id,
       scheduled_at: s.scheduled_at,
     };
+    // Keep the push deliverable until an hour past post time (or an hour from
+    // now for already-late sends), rather than discard-if-offline.
+    const expiration = Math.max(
+      Math.floor(new Date(s.scheduled_at).getTime() / 1000),
+      Math.floor(now / 1000),
+    ) + EXPIRY_GRACE_SECONDS;
 
+    let delivered = 0;
     for (const device of devices ?? []) {
-      if (await sendToDevice(admin, jwt, device, payload)) sent++;
+      if (await sendToDevice(admin, jwt, device, payload, expiration)) delivered++;
     }
+    sent += delivered;
 
-    // Stamp once so it never re-fires, even if the user had no registered device.
-    await admin.from("schedules").update({ notified_at: new Date().toISOString() }).eq("id", s.id);
+    // Stamp only when APNs accepted at least one send (or there was no device
+    // to reach); otherwise leave the row due and retry next minute, up to the
+    // attempt cap so a permanent failure can't retry forever.
+    const attempts = (s.notify_attempts ?? 0) + 1;
+    if (delivered > 0 || (devices ?? []).length === 0 || attempts >= MAX_NOTIFY_ATTEMPTS) {
+      if (delivered === 0 && (devices ?? []).length > 0) {
+        console.error(`giving up on schedule ${s.id} after ${attempts} failed passes`);
+      }
+      await admin.from("schedules").update({ notified_at: new Date().toISOString() }).eq("id", s.id);
+    } else {
+      retrying++;
+      await admin.from("schedules").update({ notify_attempts: attempts }).eq("id", s.id);
+    }
   }
 
-  return json({ due: due.length, sent });
+  return json({ due: due.length, sent, retrying });
 });
