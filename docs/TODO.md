@@ -109,6 +109,36 @@ Watch-folder shelved for now (core `FolderWatcher`/`IngestCoordinator` kept, app
 - [x] APNs setup complete — `.p8` created (now stored at `~/Secrets/BetterContentLibrary/`, contents in the `APNS_PRIVATE_KEY` edge secret), cron authed via Vault `cron_secret`; end-to-end push confirmed working.
 - [ ] Notification → download deep-link handling (currently opens the post card; download is one more tap)
 
+#### Push delivery observability + retry correctness (2026-08-26)
+Investigating "no pushes on mobile": the app-side path (entitlement, registration,
+token upload, deep link) and the APNs JWT all check out. What was **not**
+verifiable is the cron → function hop, which had no instrumentation at all.
+- [x] **`verify_jwt` pinned in `supabase/config.toml`** — the cron job sends only
+  `x-cron-secret`, so a redeploy without `--no-verify-jwt` turns every invocation
+  into a gateway 401 the function never sees. The flag now lives in the repo
+  instead of in whoever's shell last ran the deploy.
+- [x] **Delivery watchdog (migration 0016)** — the sender job records each
+  `net.http_post` request id in `internal.notification_dispatch`; a 15-minute
+  check joins those against `net._http_response` and writes a verdict to
+  `internal.notification_delivery_log` (`ok` / `worker_stalled` / `all_failed` /
+  `degraded` / `no_dispatch`), raising a warning with the remedy. Closes the gap
+  where `net.http_post` returning an id made pg_cron report success regardless of
+  whether the request was ever dispatched or came back 200.
+- [x] **Manual triage script** — `supabase/diagnostics/notification_delivery.sql`,
+  paste-ready, walks all four hops; needs no migration.
+- [x] **Sender fixes** — a failed `devices` lookup no longer reads as "user has no
+  devices" (it stamped `notified_at` and retired the push permanently); a notify
+  target with no device yet now retries within the lead window instead of being
+  retired on the first pass; and a token is only deleted once **both** APNs
+  gateways reject it — a 410 from the first gateway used to delete live tokens
+  whose recorded `environment` was merely mislabelled.
+- [x] **Token upload retries** — `PushManager` backs off and retries instead of
+  `try?`-swallowing a single failed upsert until the next cold launch.
+- [ ] **Run the triage script against the live DB** — needs dashboard access;
+  determines whether the standing outage is the pg_net worker (0011 dropped and
+  recreated the extension, which leaves the worker undrained until
+  `select net.worker_restart();`) or a `verify_jwt` 401.
+
 ## Phase 4.5 — Design experiment & revert (2026-07-02)
 The custom BCL design system (from the "BetterContentLibrary UI" claude.ai/design project) was implemented across both apps, then **reverted by decision: the app should look as macOS/iOS-native as possible** (system colors, standard controls, follows light/dark). What survived the revert:
 - [x] **iOS Schedule tab kept** (the one screen Nicolas liked): Up-next card (due <24 h, deep-links Day detail), dot calendar with status dots, pinned day agenda with Mark as Posted / Skip context menu — re-styled with system semantic colors so it adapts natively

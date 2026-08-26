@@ -34,6 +34,9 @@ final class PushManager {
     private let devices = DevicesService()
     private var profile: Profile?
     private(set) var deviceToken: String?
+    /// The in-flight upload, so overlapping triggers (activate + the APNs
+    /// callback, or a retry still backing off) don't stack duplicate upserts.
+    private var uploadTask: Task<Void, Never>?
 
     /// Call once the signed-in user is known: ask permission, register for APNs,
     /// and upload the token (now, or when it arrives).
@@ -54,18 +57,42 @@ final class PushManager {
         uploadIfPossible()
     }
 
+    /// Uploads the token once both halves are known (the APNs callback and
+    /// sign-in race, in either order), retrying on failure.
+    ///
+    /// The retry matters: the backend can only reach this device while a row
+    /// exists in `devices`, and nothing else re-attempts the upsert until the
+    /// next cold launch. A single upload dropped on a flaky network used to
+    /// mean no pushes for the rest of the session.
     private func uploadIfPossible() {
         guard let profile, let token = deviceToken else { return }
-        let environment = Self.environment
-        Task {
-            try? await devices.register(
-                token: token,
-                profileId: profile.id,
-                orgId: profile.orgId,
-                environment: environment
-            )
+        let (profileId, orgId, environment) = (profile.id, profile.orgId, Self.environment)
+        uploadTask?.cancel()
+        uploadTask = Task { [devices] in
+            for (attempt, delay) in Self.uploadRetryDelays.enumerated() {
+                if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
+                guard !Task.isCancelled else { return }
+                do {
+                    try await devices.register(
+                        token: token,
+                        profileId: profileId,
+                        orgId: orgId,
+                        environment: environment
+                    )
+                    return
+                } catch {
+                    if attempt == Self.uploadRetryDelays.count - 1 {
+                        print("APNs token upload failed \(attempt + 1)x; retrying on next launch: \(error)")
+                    }
+                }
+            }
         }
     }
+
+    /// How long to wait before each attempt — the first goes out immediately,
+    /// the rest back off. Worth riding out a spell of bad connectivity here
+    /// rather than leaving the device unreachable until the app is relaunched.
+    private static let uploadRetryDelays: [Int] = [0, 2, 8, 30, 120]
 
     /// Which APNs gateway this device's token belongs to — "sandbox" or
     /// "production". This is decided by the build's `aps-environment`

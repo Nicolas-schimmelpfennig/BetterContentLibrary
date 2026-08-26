@@ -1,0 +1,23 @@
+# Supabase CLI project config.
+#
+# This file exists for one reason: the per-function JWT gate. `verify_jwt`
+# defaults to true, and it is enforced by the platform gateway *before* a
+# function's own code runs — so a plain `supabase functions deploy
+# send-due-notifications` (without --no-verify-jwt) silently turns every
+# pg_cron invocation into a 401 the function never sees and never logs.
+#
+# Committing the setting here makes the deploy reproducible: the CLI reads it
+# from this file, so the flag can't drift between deploys or between machines.
+
+project_id = "srltmrcwpdtjiiflwwkb"
+
+# Invoked by pg_cron via pg_net (migration 0010/0016), which sends no
+# Authorization header — it authenticates with the `x-cron-secret` shared
+# secret that the function itself checks on the first line of its handler.
+[functions.send-due-notifications]
+verify_jwt = false
+
+# Called by the apps with the signed-in user's JWT; the function reads the
+# caller's org from that token, so the gateway must keep verifying it.
+[functions.r2-sign]
+verify_jwt = true

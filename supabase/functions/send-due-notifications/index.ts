@@ -3,24 +3,28 @@
 // not yet notified, with a notify target) and sends an APNs "time to post" push
 // to that user's devices.
 //
-// Delivery semantics (v7):
+// Delivery semantics (v8):
 //  - Pushes carry an apns-expiration of scheduled_at + 1h, so APNs stores and
 //    forwards to a device that's briefly offline instead of discarding.
-//  - notified_at is stamped only after at least one device send succeeds (or
-//    the target has no devices). Failed passes increment notify_attempts and
-//    retry next minute, giving up at MAX_NOTIFY_ATTEMPTS.
+//  - notified_at is stamped only after at least one device send succeeds. Every
+//    other outcome (no device registered yet, gateway rejection, a failed
+//    devices lookup) increments notify_attempts and retries next minute,
+//    giving up at MAX_NOTIFY_ATTEMPTS.
 //  - Rescheduling clears notified_at via DB trigger (migration 0015), so a
 //    moved post gets a fresh push at its new time.
-//  - Tokens APNs reports dead (Unregistered, or rejected by both gateways) are
-//    deleted from `devices` so they stop accumulating.
+//  - Tokens rejected as unknown by *both* gateways are deleted from `devices`
+//    so they stop accumulating. One gateway's rejection is never enough: a
+//    live token with a mislabelled environment draws exactly that answer.
 //
 // Schedules more than STALE_AFTER_HOURS past are retired silently (stamped
 // without sending) so a backlog — e.g. cron downtime or rows edited into the
 // past — never triggers a blast of stale pushes.
 //
-// Auth: invoked by pg_cron with a shared secret in the `x-cron-secret` header
-// (verify_jwt is off so the gateway lets the call through to this check). DB
-// access uses the auto-injected service role to bypass RLS.
+// Auth: invoked by pg_cron with a shared secret in the `x-cron-secret` header.
+// The job sends no Authorization header, so this function MUST be deployed with
+// verify_jwt off or the platform gateway 401s every call before this check ever
+// runs — that setting is pinned in supabase/config.toml, not passed by hand.
+// DB access uses the auto-injected service role to bypass RLS.
 //
 // Required secrets (set via `supabase secrets set` or the dashboard):
 //   APNS_KEY_ID, APNS_TEAM_ID, APNS_PRIVATE_KEY (the .p8 PEM contents),
@@ -128,6 +132,19 @@ type ApnsEnv = keyof typeof APNS_HOSTS;
 // retry the other gateway rather than giving up.
 const WRONG_GATEWAY_REASONS = new Set(["BadDeviceToken", "BadEnvironmentKeyInToken"]);
 
+/// Whether APNs is saying "I have no such registration" — either because the
+/// token belongs to the *other* gateway (400 BadDeviceToken /
+/// BadEnvironmentKeyInToken) or because this gateway once knew it and no
+/// longer does (410 Unregistered).
+///
+/// Both answers are ambiguous on their own: a device whose stored environment
+/// is wrong can draw either one from the gateway it doesn't belong to. So this
+/// is the signal to *try the other gateway*, never on its own the signal to
+/// delete the token — only a rejection from both gateways means that.
+function unknownOnThisGateway(res: { status: number; reason: string | null }): boolean {
+  return res.status === 410 || (!!res.reason && WRONG_GATEWAY_REASONS.has(res.reason));
+}
+
 async function postToGateway(
   env: ApnsEnv,
   jwt: string,
@@ -168,28 +185,31 @@ async function sendToDevice(
   const primary: ApnsEnv = device.environment === "production" ? "production" : "sandbox";
   const other: ApnsEnv = primary === "production" ? "sandbox" : "production";
 
-  let res = await postToGateway(primary, jwt, device.apns_token, payload, expiration);
+  const res = await postToGateway(primary, jwt, device.apns_token, payload, expiration);
+  if (res.ok) return true;
 
-  // 410 Unregistered: the token was valid for this gateway but the app is gone
-  // (uninstalled or replaced by a differently-signed build). Drop the row so
-  // dead tokens from old installs stop accumulating.
-  if (res.status === 410) {
+  // Anything else (429, 5xx, InvalidProviderToken, TopicDisallowed…) is either
+  // transient or a provider-config problem — never the token's fault. Keep the
+  // row and let the schedule retry on a later pass.
+  if (!unknownOnThisGateway(res)) return false;
+
+  const retry = await postToGateway(other, jwt, device.apns_token, payload, expiration);
+  if (retry.ok) {
+    // The stored environment was wrong. Correct it so future sends hit the
+    // right gateway first instead of always double-posting.
+    await admin.from("devices").update({ environment: other }).eq("id", device.id);
+    return true;
+  }
+
+  // Unknown on *both* gateways: the app is genuinely gone (uninstalled, or
+  // replaced by a differently-signed build). Only now is it safe to drop the
+  // row — deleting on the first gateway's answer alone would throw away live
+  // tokens whose recorded environment is simply mislabelled, and nothing
+  // re-creates the row until the app is next launched.
+  if (unknownOnThisGateway(retry)) {
     await admin.from("devices").delete().eq("id", device.id);
-    return false;
   }
-
-  if (!res.ok && res.reason && WRONG_GATEWAY_REASONS.has(res.reason)) {
-    res = await postToGateway(other, jwt, device.apns_token, payload, expiration);
-    // Retry succeeded → the stored environment was wrong. Correct it so future
-    // sends hit the right gateway first instead of always double-posting.
-    if (res.ok) {
-      await admin.from("devices").update({ environment: other }).eq("id", device.id);
-    } else if (res.status === 410 || (res.reason && WRONG_GATEWAY_REASONS.has(res.reason))) {
-      // Rejected by both gateways: the token is dead everywhere. Delete it.
-      await admin.from("devices").delete().eq("id", device.id);
-    }
-  }
-  return res.ok;
+  return false;
 }
 
 Deno.serve(async (req) => {
@@ -237,10 +257,17 @@ Deno.serve(async (req) => {
   let retrying = 0;
 
   for (const s of due) {
-    const { data: devices } = await admin
+    // Capture the error: on a failed lookup supabase-js returns data === null,
+    // which is indistinguishable from "this user has no devices" unless the
+    // error is checked — and retiring the schedule on that mistake is
+    // permanent (see the stamping rules below).
+    const { data: devices, error: devicesError } = await admin
       .from("devices")
       .select("id, apns_token, environment")
       .eq("profile_id", s.notify_profile_id);
+    if (devicesError) {
+      console.error(`devices lookup failed for schedule ${s.id}: ${devicesError.message}`);
+    }
 
     // deno-lint-ignore no-explicit-any
     const title = (s as any).clips?.title ?? "your video";
@@ -265,20 +292,32 @@ Deno.serve(async (req) => {
       Math.floor(now / 1000),
     ) + EXPIRY_GRACE_SECONDS;
 
+    const registered = devicesError ? [] : (devices ?? []);
     let delivered = 0;
-    for (const device of devices ?? []) {
+    for (const device of registered) {
       if (await sendToDevice(admin, jwt, device, payload, expiration)) delivered++;
     }
     sent += delivered;
 
-    // Stamp only when APNs accepted at least one send (or there was no device
-    // to reach); otherwise leave the row due and retry next minute, up to the
-    // attempt cap so a permanent failure can't retry forever.
+    // Stamp only once APNs has actually accepted a send. Every other outcome —
+    // a failed lookup, a target with no registered device yet, a gateway
+    // rejection — leaves the row due so it retries next minute, because all of
+    // them are recoverable *within the lead window*: a phone that registers its
+    // token a few minutes after the scan first ran still gets its push.
+    //
+    // Only MAX_NOTIFY_ATTEMPTS passes end that, so a genuinely undeliverable
+    // schedule (notify target who has never opened the iOS app, permanently
+    // dead token) can't retry forever.
     const attempts = (s.notify_attempts ?? 0) + 1;
-    if (delivered > 0 || (devices ?? []).length === 0 || attempts >= MAX_NOTIFY_ATTEMPTS) {
-      if (delivered === 0 && (devices ?? []).length > 0) {
-        console.error(`giving up on schedule ${s.id} after ${attempts} failed passes`);
-      }
+    if (delivered > 0) {
+      await admin.from("schedules").update({ notified_at: new Date().toISOString() }).eq("id", s.id);
+    } else if (attempts >= MAX_NOTIFY_ATTEMPTS) {
+      const why = devicesError
+        ? `devices lookup failing (${devicesError.message})`
+        : registered.length === 0
+        ? "notify target has no registered device"
+        : `${registered.length} device(s), all rejected by APNs`;
+      console.error(`giving up on schedule ${s.id} after ${attempts} passes: ${why}`);
       await admin.from("schedules").update({ notified_at: new Date().toISOString() }).eq("id", s.id);
     } else {
       retrying++;
