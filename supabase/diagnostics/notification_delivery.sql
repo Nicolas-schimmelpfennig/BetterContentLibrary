@@ -20,14 +20,14 @@ select jobid, jobname, schedule, active, command
 
 select status, count(*), max(start_time) as most_recent, min(start_time) as oldest
   from cron.job_run_details
- where jobname = 'send-due-notifications'
+ where jobid = (select jobid from cron.job where jobname = 'send-due-notifications')
    and start_time > now() - interval '2 hours'
  group by status;
 
 -- Recent failures in full, if any.
 select start_time, status, return_message
   from cron.job_run_details
- where jobname = 'send-due-notifications'
+ where jobid = (select jobid from cron.job where jobname = 'send-due-notifications')
    and status <> 'succeeded'
    and start_time > now() - interval '24 hours'
  order by start_time desc
@@ -39,10 +39,11 @@ select start_time, status, return_message
 -- stays attached to the old state. http_post keeps returning ids, the queue
 -- keeps growing, and nothing is ever sent.
 --
--- A queue that is more than a handful of rows deep, or whose oldest entry is
--- minutes old, means the worker is not draining it.
+-- The queue carries no timestamp, so read it as a depth gauge: the worker
+-- drains continuously, so more than a handful of rows — and above all a depth
+-- that does not fall when you re-run this — means it is not draining.
 --     Remedy:  select net.worker_restart();
-select count(*) as queued, min(created) as oldest_queued
+select count(*) as queued, min(id) as oldest_id, max(id) as newest_id
   from net.http_request_queue;
 
 -- §3 ── What did the edge function reply? ----------------------------------

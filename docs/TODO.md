@@ -134,10 +134,27 @@ verifiable is the cron → function hop, which had no instrumentation at all.
   whose recorded `environment` was merely mislabelled.
 - [x] **Token upload retries** — `PushManager` backs off and retries instead of
   `try?`-swallowing a single failed upsert until the next cold launch.
-- [ ] **Run the triage script against the live DB** — needs dashboard access;
-  determines whether the standing outage is the pg_net worker (0011 dropped and
-  recreated the extension, which leaves the worker undrained until
-  `select net.worker_restart();`) or a `verify_jwt` 401.
+- [x] **Ran the triage script against the live DB (2026-08-27)** — via
+  `supabase db query --linked`. **The cron hop is healthy and both suspects are
+  cleared:** 120/120 cron runs succeeded in the last 2 h with no failures in 24 h,
+  the pg_net queue is empty, and all 360 responses in the last 6 h are HTTP 200
+  (`{"sent":0}` — nothing due). `functions list` confirms the deployed sender is
+  v7 with `verify_jwt: false`, so the gateway was never rejecting it either. Two
+  column bugs in the script itself were found and fixed in the process
+  (`cron.job_run_details` keys on `jobid`, not `jobname`; `net.http_request_queue`
+  has no `created` column on pg_net 0.14).
+- [ ] **Real root cause: stale device rows make a failed push look delivered.**
+  `devices` is unique on `apns_token` alone, so every token a phone has ever
+  minted keeps its own row forever — one profile (Nicolas) currently has **three**,
+  two of them `sandbox` tokens last seen 2026-07-06 and 2026-07-09. The sender
+  stamps `notified_at` when *any* row's send is accepted, and the sandbox gateway
+  keeps returning 200 for tokens whose install is long gone. The 2026-08-26 15:00
+  schedule was stamped at 14:45:03 with `notify_attempts = 0` — i.e. first pass,
+  "delivered" — while the live device (`production`, re-registered 17:21 the same
+  day) plausibly got nothing. Fix direction: key a device row on a stable
+  per-install id (`identifierForVendor`) so a rotated token *replaces* the row
+  instead of adding one, and stop treating "one gateway said 200" as delivery
+  when the profile has rows the current install did not register.
 
 ## Phase 4.5 — Design experiment & revert (2026-07-02)
 The custom BCL design system (from the "BetterContentLibrary UI" claude.ai/design project) was implemented across both apps, then **reverted by decision: the app should look as macOS/iOS-native as possible** (system colors, standard controls, follows light/dark). What survived the revert:
