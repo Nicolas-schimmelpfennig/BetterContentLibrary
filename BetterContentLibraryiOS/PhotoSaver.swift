@@ -15,7 +15,7 @@ enum PhotoSaver {
         var errorDescription: String? {
             switch self {
             case .notAuthorized:
-                return "Allow photo library access in Settings to save videos."
+                return "Allow photo library access in Settings to save videos and thumbnails."
             }
         }
     }
@@ -29,6 +29,18 @@ enum PhotoSaver {
         }
         try await PHPhotoLibrary.shared().performChanges {
             PHAssetCreationRequest.creationRequestForAssetFromVideo(atFileURL: url)
+        }
+    }
+
+    /// Saves image bytes to the camera roll as-is (a PNG stays a PNG), for a
+    /// scheduled post's cover.
+    static func saveImage(_ data: Data) async throws {
+        let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
+        guard status == .authorized || status == .limited else {
+            throw SaveError.notAuthorized
+        }
+        try await PHPhotoLibrary.shared().performChanges {
+            PHAssetCreationRequest.forAsset().addResource(with: .photo, data: data, options: nil)
         }
     }
 }

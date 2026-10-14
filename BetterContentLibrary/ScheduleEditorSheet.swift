@@ -6,12 +6,14 @@
 //  library clip on a day) and from the library ("Schedule…" in the context
 //  menu). Clip and date prefill when known; every field stays editable.
 //
-//  Layout: clip preview + picker on the left; platform chips, date/time,
-//  caption, and the internal notify/notes group on the right.
+//  Layout: clip preview + picker and the post's custom thumbnail on the left;
+//  platform chips, date/time, caption, and the internal notify/notes group on
+//  the right.
 //
 
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 import BetterContentCore
 
 struct ScheduleEditorSheet: View {
@@ -29,6 +31,12 @@ struct ScheduleEditorSheet: View {
     @State private var notifyProfileId: UUID?
     @State private var poster: NSImage?
     @State private var previewClip: Clip?
+    /// The custom thumbnail edit, applied on save.
+    @State private var cover: CoverChange = .unchanged
+    @State private var existingCover: NSImage?
+    @State private var coverError: String?
+    @State private var importingCover = false
+    @State private var coverTargeted = false
 
     private var schedule: ScheduleModel { model.schedule }
 
@@ -115,6 +123,17 @@ struct ScheduleEditorSheet: View {
                 poster = await model.thumbnails.image(for: clip)
             }
         }
+        .task {
+            if let existing, existing.hasCover {
+                existingCover = await schedule.coverImage(for: existing)
+            }
+        }
+        .fileImporter(isPresented: $importingCover, allowedContentTypes: [.jpeg, .png, .image]) { result in
+            switch result {
+            case .success(let url): stageCover(url)
+            case .failure(let error): coverError = error.localizedDescription
+            }
+        }
     }
 
     // MARK: Left column — clip preview & picker
@@ -142,6 +161,8 @@ struct ScheduleEditorSheet: View {
             }
 
             Spacer(minLength: 0)
+
+            coverSection
 
             VStack(alignment: .leading, spacing: 6) {
                 sectionLabel("Clip")
@@ -198,6 +219,85 @@ struct ScheduleEditorSheet: View {
                     .foregroundStyle(.white)
                     .padding(6)
             }
+        }
+    }
+
+    // MARK: Custom thumbnail
+
+    private var coverPreview: NSImage? {
+        switch cover {
+        case .set(let image): return NSImage(data: image.data)
+        case .removed: return nil
+        case .unchanged: return existingCover
+        }
+    }
+
+    /// The post's custom cover: drop a JPEG/PNG on the well, or choose one.
+    /// Stored with the post (separate from the clip's poster) and downloaded
+    /// next to the video on the phone at post time.
+    private var coverSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                sectionLabel("Thumbnail")
+                Spacer()
+                if coverPreview != nil {
+                    Button("Replace…") { importingCover = true }
+                        .buttonStyle(.link)
+                    Button("Remove") {
+                        cover = existing?.hasCover == true ? .removed : .unchanged
+                        coverError = nil
+                    }
+                    .buttonStyle(.link)
+                }
+            }
+
+            ZStack {
+                RoundedRectangle(cornerRadius: 8).fill(.quaternary.opacity(0.5))
+                if let coverPreview {
+                    Image(nsImage: coverPreview)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                } else {
+                    VStack(spacing: 4) {
+                        Image(systemName: "photo.badge.plus")
+                            .font(.title2)
+                        Text("Drop a JPEG or PNG, or click to choose")
+                            .font(.caption)
+                    }
+                    .foregroundStyle(.secondary)
+                }
+            }
+            .frame(height: 130)
+            .frame(maxWidth: .infinity)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(coverTargeted ? Color.accentColor : Color.primary.opacity(0.12),
+                                  style: StrokeStyle(lineWidth: coverTargeted ? 2 : 1, dash: coverPreview == nil ? [4] : []))
+            )
+            .contentShape(Rectangle())
+            .onTapGesture { if coverPreview == nil { importingCover = true } }
+            .dropDestination(for: URL.self) { urls, _ in
+                guard let url = urls.first else { return false }
+                stageCover(url)
+                return true
+            } isTargeted: { coverTargeted = $0 }
+            .help("The post's custom thumbnail — downloaded alongside the video at post time")
+
+            if let coverError {
+                Text(coverError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        }
+    }
+
+    private func stageCover(_ url: URL) {
+        do {
+            cover = .set(try CoverImage(contentsOf: url))
+            coverError = nil
+        } catch {
+            coverError = error.localizedDescription
         }
     }
 
@@ -394,7 +494,8 @@ struct ScheduleEditorSheet: View {
                     at: scheduledAt,
                     caption: trimmedCaption.isEmpty ? nil : trimmedCaption,
                     notes: trimmedNotes.isEmpty ? nil : trimmedNotes,
-                    notifyProfileId: notifyProfileId
+                    notifyProfileId: notifyProfileId,
+                    cover: cover
                 )
             } else {
                 await schedule.add(
@@ -403,7 +504,8 @@ struct ScheduleEditorSheet: View {
                     at: scheduledAt,
                     caption: trimmedCaption.isEmpty ? nil : trimmedCaption,
                     notes: trimmedNotes.isEmpty ? nil : trimmedNotes,
-                    notifyProfileId: notifyProfileId
+                    notifyProfileId: notifyProfileId,
+                    cover: cover
                 )
             }
         }

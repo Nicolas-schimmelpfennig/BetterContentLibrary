@@ -84,6 +84,33 @@ public final class StorageService: Sendable {
         return data
     }
 
+    /// Uploads a scheduled post's cover image and returns its R2 key. Each
+    /// upload gets a fresh key (`orgs/<org>/covers/<scheduleId>-<nonce>.<ext>`),
+    /// so the caller deletes the previous one once the row points here.
+    public func uploadCover(_ data: Data, scheduleId: UUID, ext: String, contentType: String) async throws -> String {
+        let ticket: UploadTicket = try await client.functions.invoke(
+            "r2-sign",
+            options: FunctionInvokeOptions(body: CoverUploadRequest(scheduleId: scheduleId.uuidString, ext: ext))
+        )
+        var request = URLRequest(url: ticket.uploadUrl)
+        request.httpMethod = "PUT"
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        let (_, response) = try await urlSession.upload(for: request, from: data)
+        try Self.verifySuccess(response)
+        return ticket.key
+    }
+
+    /// Fetches the cover image a schedule row currently points at.
+    public func downloadCover(scheduleId: UUID) async throws -> Data {
+        let ticket: DownloadTicket = try await client.functions.invoke(
+            "r2-sign",
+            options: FunctionInvokeOptions(body: CoverDownloadRequest(scheduleId: scheduleId.uuidString))
+        )
+        let (data, response) = try await urlSession.data(from: ticket.downloadUrl)
+        try Self.verifySuccess(response)
+        return data
+    }
+
     /// Resolves a short-lived presigned GET URL for streaming a clip's video
     /// (e.g. for `AVPlayer` preview or frame skimming).
     public func streamURL(clipId: UUID) async throws -> URL {
@@ -181,6 +208,19 @@ public final class StorageService: Sendable {
         let action = "download"
         let kind = "thumb"
         let clipId: String
+    }
+
+    private struct CoverUploadRequest: Encodable {
+        let action = "upload"
+        let kind = "cover"
+        let scheduleId: String
+        let ext: String
+    }
+
+    private struct CoverDownloadRequest: Encodable {
+        let action = "download"
+        let kind = "cover"
+        let scheduleId: String
     }
 
     private struct DeleteRequest: Encodable {

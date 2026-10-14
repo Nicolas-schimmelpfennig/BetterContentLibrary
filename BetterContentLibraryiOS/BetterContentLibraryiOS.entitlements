@@ -4,6 +4,10 @@
 <dict>
 	<key>aps-environment</key>
 	<string>development</string>
+	<!-- Post reminders are sent with interruption-level time-sensitive, so a
+	     Focus or the Scheduled Summary doesn't hold them until it's too late. -->
+	<key>com.apple.developer.usernotifications.time-sensitive</key>
+	<true/>
 	<!-- iCloud Drive storage backend: same container as the macOS app so
 	     clips uploaded on one device are reachable on the other. -->
 	<key>com.apple.developer.icloud-container-identifiers</key>

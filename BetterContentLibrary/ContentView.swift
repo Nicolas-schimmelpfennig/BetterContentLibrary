@@ -99,6 +99,20 @@ private struct MainView: View {
         .onChange(of: showSchedule) { _, visible in
             if !visible && !showLibrary { showLibrary = true }
         }
+        // Window-level, so a failed save from the schedule editor shows no
+        // matter which pane opened it (the library's "Schedule…" included).
+        .alert("Schedule", isPresented: scheduleMessagePresented) {
+            Button("OK") { model.schedule.errorMessage = nil }
+        } message: {
+            Text(model.schedule.errorMessage ?? "")
+        }
+    }
+
+    private var scheduleMessagePresented: Binding<Bool> {
+        Binding(
+            get: { model.schedule.errorMessage != nil },
+            set: { if !$0 { model.schedule.errorMessage = nil } }
+        )
     }
 
     /// The library pane's width for the current visibility + divider state.

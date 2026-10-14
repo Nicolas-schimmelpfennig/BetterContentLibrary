@@ -16,6 +16,7 @@ struct MainTabView: View {
     @State private var model: AppModel
     @State private var selectedTab: Tab = .library
     @State private var deepLink = DeepLinkCenter.shared
+    @Environment(\.scenePhase) private var scenePhase
 
     init(profile: Profile) {
         self.profile = profile
@@ -40,6 +41,11 @@ struct MainTabView: View {
         .task {
             PushManager.shared.activate(for: profile)
             if deepLink.scheduleDay != nil { selectedTab = .schedule }
+        }
+        // Re-confirm the push token on every return to the foreground, not
+        // just at cold launch (see PushManager.refresh).
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { PushManager.shared.refresh() }
         }
         .onChange(of: deepLink.scheduleDay) { _, day in
             if day != nil { selectedTab = .schedule }

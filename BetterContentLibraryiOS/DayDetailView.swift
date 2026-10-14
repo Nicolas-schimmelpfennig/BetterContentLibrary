@@ -3,8 +3,9 @@
 //  BetterContentLibrary (iOS)
 //
 //  Tapping a calendar day shows its scheduled posts as a horizontally swipeable
-//  gallery of cards. Each card: title, tappable thumbnail (→ preview), metadata,
-//  and a pinned "Download to Photos" button.
+//  gallery of cards. Each card: title, tappable thumbnail (→ preview), the
+//  post's custom cover if one was uploaded, metadata, and a pinned download
+//  button that saves the video (and the cover with it) to Photos.
 //
 
 import SwiftUI
@@ -55,6 +56,7 @@ struct DayDetailSheet: View {
                 }
             }
             .sheet(isPresented: $isAdding) { ScheduleFormSheet(day: day, model: schedule) }
+            .scheduleErrorAlert(schedule)
         }
     }
 }
@@ -77,6 +79,8 @@ private struct ScheduledPostCard: View {
     @State private var previewClip: Clip?
     @State private var isEditing = false
     @State private var phase: DownloadPhase = .idle
+    @State private var cover: UIImage?
+    @State private var coverPhase: DownloadPhase = .idle
 
     private var schedule: ScheduleModel { model.schedule }
     private var clip: Clip? { schedule.clip(for: post) }
@@ -99,6 +103,7 @@ private struct ScheduledPostCard: View {
                     }
 
                     thumbnail
+                    if post.hasCover { coverSection }
                     metadata
                 }
                 .padding(20)
@@ -110,6 +115,73 @@ private struct ScheduledPostCard: View {
         .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
         .fullScreenCover(item: $previewClip) { ClipPreviewView(clip: $0, model: model) }
         .sheet(isPresented: $isEditing) { ScheduleFormSheet(editing: post, model: schedule) }
+        // Keyed on the cover key: a replaced cover (new key) reloads.
+        .task(id: post.coverKey) {
+            cover = nil
+            coverPhase = .idle
+            if post.hasCover { cover = await schedule.coverImage(for: post) }
+        }
+    }
+
+    /// The custom thumbnail uploaded with this post, with its own save button
+    /// (the main download button saves it too).
+    private var coverSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("Thumbnail", systemImage: "photo")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                switch coverPhase {
+                case .saved:
+                    Label("Saved", systemImage: "checkmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                case .working:
+                    ProgressView().controlSize(.small)
+                default:
+                    Button {
+                        saveCover()
+                    } label: {
+                        Label("Save", systemImage: "square.and.arrow.down")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                    .disabled(cover == nil)
+                }
+            }
+            ZStack {
+                RoundedRectangle(cornerRadius: 10).fill(.quaternary)
+                if let cover {
+                    Image(uiImage: cover)
+                        .resizable()
+                        .scaledToFit()
+                } else {
+                    ProgressView()
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: 80, maxHeight: 240)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            if case .failed(let message) = coverPhase {
+                Text(message)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+            }
+        }
+    }
+
+    private func saveCover() {
+        coverPhase = .working("Saving…")
+        Task {
+            do {
+                try await PhotoSaver.saveImage(try await schedule.coverData(for: post))
+                coverPhase = .saved
+            } catch {
+                coverPhase = .failed(error.localizedDescription)
+            }
+        }
     }
 
     @ViewBuilder
@@ -197,7 +269,8 @@ private struct ScheduledPostCard: View {
             Divider()
             switch phase {
             case .saved:
-                Label("Saved to Photos", systemImage: "checkmark.circle.fill")
+                Label(post.hasCover ? "Video & thumbnail saved to Photos" : "Saved to Photos",
+                      systemImage: "checkmark.circle.fill")
                     .font(.footnote)
                     .foregroundStyle(.green)
             case .failed(let message):
@@ -217,7 +290,7 @@ private struct ScheduledPostCard: View {
                         Text(label)
                     } else {
                         Image(systemName: "arrow.down.circle.fill")
-                        Text("Download to Photos")
+                        Text(post.hasCover ? "Download Video + Thumbnail" : "Download to Photos")
                     }
                 }
                 .frame(maxWidth: .infinity)
@@ -236,9 +309,18 @@ private struct ScheduledPostCard: View {
         Task {
             do {
                 let url = try await model.downloadVideoFile(for: clip)
+                defer { try? FileManager.default.removeItem(at: url) }
+                var coverData: Data?
+                if post.hasCover {
+                    phase = .working("Downloading thumbnail…")
+                    coverData = try await schedule.coverData(for: post)
+                }
                 phase = .working("Saving…")
                 try await PhotoSaver.saveVideo(at: url)
-                try? FileManager.default.removeItem(at: url)
+                if let coverData {
+                    try await PhotoSaver.saveImage(coverData)
+                    coverPhase = .saved
+                }
                 phase = .saved
             } catch {
                 phase = .failed(error.localizedDescription)

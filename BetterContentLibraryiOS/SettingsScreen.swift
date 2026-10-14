@@ -44,6 +44,8 @@ struct SettingsScreen: View {
                     }
                 }
 
+                NotificationSettingsSection()
+
                 Section {
                     NavigationLink {
                         OrgScreen(profile: profile)
@@ -66,7 +68,10 @@ struct SettingsScreen: View {
 
                 Section {
                     Button("Sign Out", role: .destructive) {
-                        Task { try? await auth.signOut() }
+                        Task {
+                            await PushManager.shared.deactivate()
+                            try? await auth.signOut()
+                        }
                     }
                 } footer: {
                     Text(AppVersion.display)

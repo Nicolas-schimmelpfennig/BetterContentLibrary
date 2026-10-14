@@ -7,6 +7,8 @@
 //   { "action": "upload",   "kind": "thumb", "clipId": "<uuid>" }
 //   { "action": "download", "clipId": "<uuid>" }
 //   { "action": "download", "kind": "thumb", "clipId": "<uuid>" }
+//   { "action": "upload",   "kind": "cover", "scheduleId": "<uuid>", "ext": "jpg"|"png" }
+//   { "action": "download", "kind": "cover", "scheduleId": "<uuid>" }
 //   { "action": "delete",   "clipId": "<uuid>" }
 //   { "action": "delete_object", "key": "orgs/<org>/clips/<uuid>.mp4" }
 //
@@ -18,6 +20,11 @@
 //                     the storage-migration cleanup primitive; the key must lie
 //                     under the caller's own orgs/<org>/ prefix)
 // Thumbnails live at a deterministic key: orgs/<org>/thumbs/<clipId>.jpg
+// Covers (a scheduled post's custom thumbnail, migration 0018) live at
+// orgs/<org>/covers/<scheduleId>-<nonce>.<jpg|png>; the key is recorded on
+// the schedule row. The nonce makes every upload a new key, so a replaced
+// cover can never be served from a client's cache under the old name.
+// Removing one uses delete_object.
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
@@ -97,6 +104,42 @@ Deno.serve(async (req) => {
   // DB lookup — the org prefix alone keeps it isolated per tenant.
   const thumbKey = (clipId: string) => `orgs/${orgId}/thumbs/${clipId}.jpg`;
 
+  if (action === "upload" && payload.kind === "cover") {
+    const scheduleId = payload.scheduleId;
+    if (typeof scheduleId !== "string") return json({ error: "scheduleId required" }, 400);
+    const ext = String(payload.ext ?? "").toLowerCase();
+    if (ext !== "jpg" && ext !== "png") return json({ error: "ext must be jpg or png" }, 400);
+    // RLS confirms the schedule is in the caller's org; the key itself only
+    // ever names the caller's org prefix.
+    const { data: sched, error: schedErr } = await supabase
+      .from("schedules")
+      .select("id")
+      .eq("id", scheduleId)
+      .maybeSingle();
+    if (schedErr) return json({ error: schedErr.message }, 500);
+    if (!sched) return json({ error: "Schedule not found" }, 404);
+    const nonce = crypto.randomUUID().slice(0, 8);
+    const key = `orgs/${orgId}/covers/${scheduleId}-${nonce}.${ext}`;
+    const uploadUrl = await presign(key, "PUT");
+    return json({ uploadUrl, key });
+  }
+
+  if (action === "download" && payload.kind === "cover") {
+    const scheduleId = payload.scheduleId;
+    if (typeof scheduleId !== "string") return json({ error: "scheduleId required" }, 400);
+    const { data: sched, error: schedErr } = await supabase
+      .from("schedules")
+      .select("cover_key, cover_provider")
+      .eq("id", scheduleId)
+      .maybeSingle();
+    if (schedErr) return json({ error: schedErr.message }, 500);
+    const key = sched?.cover_key as string | undefined;
+    if (!key || sched?.cover_provider !== "r2") return json({ error: "Cover not found" }, 404);
+    if (!key.startsWith(`orgs/${orgId}/`)) return json({ error: "Key outside caller's org" }, 403);
+    const downloadUrl = await presign(key, "GET");
+    return json({ downloadUrl, key });
+  }
+
   if (action === "upload") {
     const kind = payload.kind === "thumb" ? "thumb" : "clip";
     if (kind === "thumb") {
@@ -147,11 +190,25 @@ Deno.serve(async (req) => {
     if (clipErr) return json({ error: clipErr.message }, 500);
     if (!clip) return json({ error: "Clip not found" }, 404);
 
+    // The clip's schedules cascade with its row, and they hold the only
+    // pointers to their cover images — so those go first too.
+    const { data: covers, error: coversErr } = await supabase
+      .from("schedules")
+      .select("cover_key")
+      .eq("clip_id", clipId)
+      .eq("cover_provider", "r2")
+      .not("cover_key", "is", null);
+    if (coversErr) return json({ error: coversErr.message }, 500);
+
     // Objects first: the row holds the only pointer to the video object, so it
     // must outlive the bytes. S3 DELETE is idempotent (404/204 both mean gone);
     // anything else aborts and keeps the row so the delete can be retried.
     const keys = [thumbKey(clipId)];
     if (clip.r2_key) keys.push(clip.r2_key as string);
+    for (const c of covers ?? []) {
+      const key = c.cover_key as string;
+      if (key.startsWith(`orgs/${orgId}/`)) keys.push(key);
+    }
     for (const key of keys) {
       const res = await aws.fetch(`${R2_ENDPOINT}/${R2_BUCKET}/${key}`, { method: "DELETE" });
       if (!res.ok && res.status !== 404) {

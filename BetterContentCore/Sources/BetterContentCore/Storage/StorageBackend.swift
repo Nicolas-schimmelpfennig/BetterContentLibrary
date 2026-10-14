@@ -70,6 +70,18 @@ public protocol StorageBackend: Sendable {
     /// Fetches a clip's poster JPEG bytes.
     func downloadThumbnail(clipId: UUID) async throws -> Data
 
+    /// Uploads a scheduled post's cover image (its custom thumbnail) and
+    /// returns its storage key. Every call yields a NEW key, so a replaced
+    /// cover never collides with a cached copy of the old one; the caller
+    /// removes the previous key once the row points at the new one.
+    func uploadCover(_ data: Data, scheduleId: UUID, ext: String, contentType: String) async throws -> String
+
+    /// Fetches a cover image's bytes.
+    func downloadCover(scheduleId: UUID, key: String) async throws -> Data
+
+    /// Removes one cover image. Idempotent: an already-missing file is fine.
+    func deleteCover(key: String) async throws
+
     /// A URL `AVPlayer`/`AVAssetImageGenerator` can use right now: a presigned
     /// https URL (R2) or a local file URL once the provider's copy is present.
     func playbackURL(for clip: Clip) async throws -> URL

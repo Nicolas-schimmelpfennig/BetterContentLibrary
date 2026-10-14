@@ -90,6 +90,16 @@ public final class SchedulesService: Sendable {
             .execute()
     }
 
+    /// Points a schedule at its cover image (or clears it with nils). The key
+    /// and provider are written together — the DB requires them paired.
+    public func setCover(_ id: UUID, key: String?, provider: StorageProvider?) async throws {
+        try await client
+            .from("schedules")
+            .update(CoverPatch(cover_key: key, cover_provider: provider?.rawValue))
+            .eq("id", value: id.uuidString)
+            .execute()
+    }
+
     /// Marks a schedule posted, recording when.
     public func markPosted(_ id: UUID, at date: Date = Date()) async throws {
         try await client
@@ -157,6 +167,20 @@ public final class SchedulesService: Sendable {
             try container.encode(caption, forKey: .caption)
             try container.encode(notes, forKey: .notes)
             try container.encode(notify_profile_id, forKey: .notify_profile_id)
+        }
+    }
+
+    private struct CoverPatch: Encodable, Sendable {
+        let cover_key: String?
+        let cover_provider: String?
+
+        enum CodingKeys: String, CodingKey { case cover_key, cover_provider }
+
+        // Explicit nulls, so clearing a cover persists (see EditPatch).
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(cover_key, forKey: .cover_key)
+            try container.encode(cover_provider, forKey: .cover_provider)
         }
     }
 

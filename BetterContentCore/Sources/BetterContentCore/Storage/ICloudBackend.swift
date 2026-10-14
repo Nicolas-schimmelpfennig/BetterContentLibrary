@@ -6,6 +6,7 @@
 //  default ubiquity container under Documents/ (visible in Finder/Files):
 //    Documents/Clips/<clipId>.<ext>    — videos
 //    Documents/Thumbs/<clipId>.jpg     — poster thumbnails
+//    Documents/Covers/<scheduleId>-<nonce>.<jpg|png> — scheduled posts' covers
 //
 //  "Upload" is a local copy into the container — from there the OS owns the
 //  sync, like any iCloud Drive document. Personal-storage semantics: only
@@ -60,6 +61,36 @@ public struct ICloudBackend: StorageBackend {
         let url = try await containerURL(for: thumbKey(clipId: clipId))
         try await ensureDownloaded(url, timeout: 30)
         return try Data(contentsOf: url)
+    }
+
+    public func uploadCover(_ data: Data, scheduleId: UUID, ext: String, contentType: String) async throws -> String {
+        let nonce = UUID().uuidString.prefix(8).lowercased()
+        let key = "Covers/\(scheduleId.uuidString)-\(nonce).\(ext)"
+        let dest = try await containerURL(for: key)
+        try await Task.detached(priority: .utility) {
+            try FileManager.default.createDirectory(
+                at: dest.deletingLastPathComponent(), withIntermediateDirectories: true
+            )
+            try data.write(to: dest, options: .atomic)
+        }.value
+        return key
+    }
+
+    public func downloadCover(scheduleId: UUID, key: String) async throws -> Data {
+        let url = try await containerURL(for: key)
+        try await ensureDownloaded(url, timeout: 30)
+        return try Data(contentsOf: url)
+    }
+
+    public func deleteCover(key: String) async throws {
+        let url = try await containerURL(for: key)
+        try await Task.detached(priority: .utility) {
+            do {
+                try FileManager.default.removeItem(at: url)
+            } catch CocoaError.fileNoSuchFile {
+                // Already gone — idempotent, like R2's delete.
+            }
+        }.value
     }
 
     public func playbackURL(for clip: Clip) async throws -> URL {

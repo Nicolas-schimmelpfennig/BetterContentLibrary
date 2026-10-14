@@ -66,6 +66,9 @@ struct ScheduleScreen: View {
             .sheet(item: $editingPost) { post in
                 ScheduleFormSheet(editing: post, model: schedule)
             }
+            // While Day detail is up it shows the alert itself; a sheet
+            // covers anything presented from here.
+            .scheduleErrorAlert(schedule, isFrontmost: detailDay == nil)
         }
     }
 
@@ -304,6 +307,7 @@ struct ScheduleFormSheet: View {
     @State private var caption = ""
     @State private var notes = ""
     @State private var notifyProfileId: UUID?
+    @State private var cover: CoverChange = .unchanged
 
     /// Create a new post, prefilled to `day` at 9:00 (every field editable).
     init(day: Date, model: ScheduleModel) {
@@ -389,6 +393,7 @@ struct ScheduleFormSheet: View {
                                 .font(.caption.monospacedDigit())
                                 .foregroundStyle(caption.count > captionLimit ? .red : .secondary)
                         }
+                        CoverFormSection(model: model, existing: existing, change: $cover)
                         Section {
                             TextField("Notes — context for whoever posts this", text: $notes, axis: .vertical)
                                 .lineLimit(2...6)
@@ -424,14 +429,16 @@ struct ScheduleFormSheet: View {
                     id: existing.id, clipId: clipId, platform: platform, at: scheduledAt,
                     caption: trimmedCaption.isEmpty ? nil : trimmedCaption,
                     notes: trimmedNotes.isEmpty ? nil : trimmedNotes,
-                    notifyProfileId: notifyProfileId
+                    notifyProfileId: notifyProfileId,
+                    cover: cover
                 )
             } else {
                 await model.add(
                     clipId: clipId, platform: platform, at: scheduledAt,
                     caption: trimmedCaption.isEmpty ? nil : trimmedCaption,
                     notes: trimmedNotes.isEmpty ? nil : trimmedNotes,
-                    notifyProfileId: notifyProfileId
+                    notifyProfileId: notifyProfileId,
+                    cover: cover
                 )
             }
         }
@@ -464,6 +471,21 @@ struct ScheduleFormSheet: View {
                 }
                 .buttonStyle(.plain)
             }
+        }
+    }
+}
+
+extension View {
+    /// Surfaces `ScheduleModel.errorMessage` (failed saves, a thumbnail that
+    /// didn't upload) — attached to each schedule surface that can be frontmost.
+    func scheduleErrorAlert(_ schedule: ScheduleModel, isFrontmost: Bool = true) -> some View {
+        alert("Schedule", isPresented: Binding(
+            get: { isFrontmost && schedule.errorMessage != nil },
+            set: { if !$0 { schedule.errorMessage = nil } }
+        )) {
+            Button("OK") { schedule.errorMessage = nil }
+        } message: {
+            Text(schedule.errorMessage ?? "")
         }
     }
 }

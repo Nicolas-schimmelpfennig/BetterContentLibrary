@@ -127,7 +127,7 @@ public final class AppModel {
     public init(profile: Profile) {
         self.profile = profile
         self.library = LibraryModel(orgId: profile.orgId)
-        self.schedule = ScheduleModel(orgId: profile.orgId, currentProfileId: profile.id)
+        self.schedule = ScheduleModel(orgId: profile.orgId, currentProfileId: profile.id, router: router)
         self.thumbnails = ThumbnailLoader(router: router)
         self.skim = SkimProvider(router: router)
         self.uploader = ClipUploader(router: router)
@@ -256,6 +256,14 @@ public final class AppModel {
     public func deleteClips(_ clipsToDelete: [Clip]) async {
         for clip in clipsToDelete {
             do {
+                // Its schedules cascade with the row, taking the only pointers
+                // to their cover images along. R2 covers are removed inside
+                // r2-sign's delete; others are cleared here, best effort.
+                for post in library.schedulesByClip[clip.id] ?? [] {
+                    if let key = post.coverKey, let provider = post.coverProvider, provider != .r2 {
+                        try? await router.backend(for: provider).deleteCover(key: key)
+                    }
+                }
                 let backend = router.backend(for: clip)
                 try await backend.deleteObjects(for: clip)
                 if !backend.deletesRow {

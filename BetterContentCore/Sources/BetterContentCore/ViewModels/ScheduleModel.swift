@@ -17,7 +17,11 @@ public final class ScheduleModel {
     private let schedules = SchedulesService()
     private let clips = ClipsService()
     private let profiles = ProfilesService()
+    private let router: StorageRouter
     private let calendar = Calendar.current
+    /// Cover bytes by storage key. Every cover upload mints a new key, so an
+    /// entry can never go stale — a replaced cover is simply a different key.
+    private var coverCache: [String: Data] = [:]
     public let orgId: UUID
     /// The signed-in user, used as the default "notify" target when scheduling.
     public let currentProfileId: UUID
@@ -35,9 +39,10 @@ public final class ScheduleModel {
     /// add/edit/delete, …) all call `load()` directly and stay live.
     public private(set) var hasLoaded = false
 
-    public init(orgId: UUID, currentProfileId: UUID) {
+    public init(orgId: UUID, currentProfileId: UUID, router: StorageRouter = StorageRouter()) {
         self.orgId = orgId
         self.currentProfileId = currentProfileId
+        self.router = router
         let comps = Calendar.current.dateComponents([.year, .month], from: Date())
         month = Calendar.current.date(from: comps) ?? Date()
     }
@@ -154,18 +159,24 @@ public final class ScheduleModel {
         at date: Date,
         caption: String? = nil,
         notes: String?,
-        notifyProfileId: UUID?
+        notifyProfileId: UUID?,
+        cover: CoverChange = .unchanged
     ) async {
+        let created: Schedule
         do {
-            _ = try await schedules.create(
+            created = try await schedules.create(
                 clipId: clipId, orgId: orgId, platform: platform,
                 scheduledAt: date, caption: caption, notes: notes,
                 notifyProfileId: notifyProfileId
             )
-            await load()
         } catch {
             errorMessage = error.localizedDescription
+            return
         }
+        // The post exists either way; a failed cover upload is reported, and
+        // the editor can add the cover again.
+        await applyCover(cover, to: created)
+        await load()
     }
 
     /// Rewrites every user-editable field of an existing schedule (the editor's
@@ -177,16 +188,81 @@ public final class ScheduleModel {
         at date: Date,
         caption: String?,
         notes: String?,
-        notifyProfileId: UUID?
+        notifyProfileId: UUID?,
+        cover: CoverChange = .unchanged
     ) async {
         do {
             try await schedules.update(
                 id, clipId: clipId, platform: platform, scheduledAt: date,
                 caption: caption, notes: notes, notifyProfileId: notifyProfileId
             )
-            await load()
         } catch {
             errorMessage = error.localizedDescription
+            return
+        }
+        if let existing = items.first(where: { $0.id == id }) {
+            var edited = existing
+            edited.clipId = clipId
+            await applyCover(cover, to: edited)
+        }
+        await load()
+    }
+
+    // MARK: Covers
+
+    /// A post's cover bytes (JPEG or PNG, as uploaded), cached by key.
+    public func coverData(for schedule: Schedule) async throws -> Data {
+        guard let key = schedule.coverKey, let provider = schedule.coverProvider else {
+            throw StorageBackendError.noStorageKey
+        }
+        if let cached = coverCache[key] { return cached }
+        let data = try await router.backend(for: provider).downloadCover(scheduleId: schedule.id, key: key)
+        coverCache[key] = data
+        return data
+    }
+
+    /// The cover decoded for display, or nil if it can't be fetched.
+    public func coverImage(for schedule: Schedule) async -> PlatformImage? {
+        guard let data = try? await coverData(for: schedule) else { return nil }
+        return PlatformImage(data: data)
+    }
+
+    /// Uploads, replaces, or removes a post's cover. New bytes go to the same
+    /// provider as the post's clip ("stored alongside the video"); the row is
+    /// re-pointed before the old file is deleted, so a failure at any step
+    /// leaves the post with a working cover (old or new), never a dangling key.
+    private func applyCover(_ change: CoverChange, to schedule: Schedule) async {
+        let previous = schedule.coverKey.flatMap { key in schedule.coverProvider.map { (key, $0) } }
+        do {
+            switch change {
+            case .unchanged:
+                return
+            case .set(let image):
+                let provider = clipsById[schedule.clipId]?.storageProvider ?? router.currentProvider
+                let key = try await router.backend(for: provider).uploadCover(
+                    image.data, scheduleId: schedule.id, ext: image.ext, contentType: image.contentType
+                )
+                do {
+                    try await schedules.setCover(schedule.id, key: key, provider: provider)
+                } catch {
+                    // Nothing points at the new file; don't leave it behind.
+                    try? await router.backend(for: provider).deleteCover(key: key)
+                    throw error
+                }
+                coverCache[key] = image.data
+            case .removed:
+                guard previous != nil else { return }
+                try await schedules.setCover(schedule.id, key: nil, provider: nil)
+            }
+        } catch {
+            errorMessage = "The thumbnail couldn't be saved: \(error.localizedDescription)"
+            return
+        }
+        if let (key, provider) = previous {
+            coverCache[key] = nil
+            // Best effort: the row no longer references it, so a failure here
+            // only strands a small file (under the schedule's id) in storage.
+            try? await router.backend(for: provider).deleteCover(key: key)
         }
     }
 
@@ -265,6 +341,14 @@ public final class ScheduleModel {
 
     public func delete(_ id: UUID) async {
         do {
+            // The row is the only pointer to its cover file, so remove the
+            // file first (best effort — a stranded thumbnail beats a post
+            // that can't be deleted while its provider is unreachable).
+            if let post = items.first(where: { $0.id == id }),
+               let key = post.coverKey, let provider = post.coverProvider {
+                try? await router.backend(for: provider).deleteCover(key: key)
+                coverCache[key] = nil
+            }
             try await schedules.delete(id)
             await load()
         } catch {

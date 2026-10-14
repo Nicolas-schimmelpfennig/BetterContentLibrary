@@ -143,18 +143,51 @@ verifiable is the cron → function hop, which had no instrumentation at all.
   column bugs in the script itself were found and fixed in the process
   (`cron.job_run_details` keys on `jobid`, not `jobname`; `net.http_request_queue`
   has no `created` column on pg_net 0.14).
-- [ ] **Real root cause: stale device rows make a failed push look delivered.**
-  `devices` is unique on `apns_token` alone, so every token a phone has ever
-  minted keeps its own row forever — one profile (Nicolas) currently has **three**,
-  two of them `sandbox` tokens last seen 2026-07-06 and 2026-07-09. The sender
-  stamps `notified_at` when *any* row's send is accepted, and the sandbox gateway
-  keeps returning 200 for tokens whose install is long gone. The 2026-08-26 15:00
-  schedule was stamped at 14:45:03 with `notify_attempts = 0` — i.e. first pass,
-  "delivered" — while the live device (`production`, re-registered 17:21 the same
-  day) plausibly got nothing. Fix direction: key a device row on a stable
-  per-install id (`identifierForVendor`) so a rotated token *replaces* the row
-  instead of adding one, and stop treating "one gateway said 200" as delivery
-  when the profile has rows the current install did not register.
+- [x] **Stale device rows make a failed push look delivered** — fixed 2026-10-14
+  (migration 0017): `devices.install_id` (a Keychain-stored per-install id that
+  survives reinstalls) + `register_device` / `unregister_device` RPCs. A rotated
+  token replaces its install's row; the caller's legacy (no-install-id) rows and
+  any other row holding the same token are dropped on registration; sign-out
+  unregisters the phone.
+
+#### Push reliability, round 3 (2026-10-14)
+Found on investigation: the 2026-08-26 fixes (sender "v8", migration 0016) were
+committed but **never deployed** — live was still sender v7 from July. And the
+real iPhone's last backend contact was 2026-08-26: the app only uploaded its
+token on cold launch, so a suspended app never refreshed a changed token.
+- [x] **Token refresh on every foreground** (`PushManager.refresh`, scenePhase),
+  re-confirmed at most every 6 h when unchanged.
+- [x] **Second push at post time** — `schedules.due_notified_at` (0017): lead push
+  15 min ahead + "Time to post" at `scheduled_at`, retried for 30 min; both share
+  `apns-collapse-id` = schedule id so the second replaces the first. Reschedule
+  re-arms both (trigger updated).
+- [x] **Time-sensitive pushes** — `interruption-level: time-sensitive` in the
+  payload + `com.apple.developer.usernotifications.time-sensitive` entitlement, so
+  Focus / Scheduled Summary don't hold reminders.
+- [x] **Settings → Notifications (iOS)** — shows permission / Time Sensitive /
+  Scheduled Summary state and a **Send Test Notification** button: the sender's
+  `{"action":"test"}` (user JWT validated in-function) pushes to the caller's
+  devices and returns each one's APNs verdict.
+- [x] **Deployed 2026-10-14**: migrations 0016 + 0017 + 0018 applied (history
+  matches the repo filenames), `send-due-notifications` platform v8 (repo "v9",
+  verify_jwt off), `r2-sign` platform v8 (verify_jwt on). The Supabase MCP
+  `apply_migration` auto-declines SQL containing DELETE/UPDATE — such
+  migrations go through the CLI (`supabase db push --linked`) run by Nicolas.
+
+#### Scheduled-post thumbnails ("covers") (2026-10-14)
+- [x] Migration 0018: `schedules.cover_key` + `cover_provider` (paired). A cover
+  belongs to the post, not the clip (different thumbnails per platform), and is
+  a separate file from the clip's auto-poster. Stored with the clip's provider:
+  R2 `orgs/<org>/covers/<scheduleId>-<nonce>.<jpg|png>` (r2-sign v8 kind
+  `cover`), iCloud `Covers/…`. Fresh nonce per upload ⇒ cache-by-key is safe.
+- [x] JPEG/PNG kept byte-for-byte; HEIC etc. transcoded to JPEG (`CoverImage`).
+- [x] macOS editor: Thumbnail drop well (drop / click / Replace / Remove). iOS
+  form: Thumbnail section (Photos or Files). iOS day card: cover preview + Save,
+  and the main button becomes "Download Video + Thumbnail".
+- [x] Cleanup: deleting a post removes its cover; deleting a clip removes its
+  posts' covers (R2 server-side in r2-sign, others client-side best effort).
+- [x] Schedule errors now surface (they were never shown): window-level alert on
+  macOS, Schedule screen + Day detail on iOS.
 
 ## Phase 4.5 — Design experiment & revert (2026-07-02)
 The custom BCL design system (from the "BetterContentLibrary UI" claude.ai/design project) was implemented across both apps, then **reverted by decision: the app should look as macOS/iOS-native as possible** (system colors, standard controls, follows light/dark). What survived the revert:

@@ -13,7 +13,9 @@ project_id = "srltmrcwpdtjiiflwwkb"
 
 # Invoked by pg_cron via pg_net (migration 0010/0016), which sends no
 # Authorization header — it authenticates with the `x-cron-secret` shared
-# secret that the function itself checks on the first line of its handler.
+# secret that the function itself checks in its handler. Its one user-facing
+# action (Settings → Send Test Notification) validates the caller's JWT in
+# code instead, so the gateway check stays off for both.
 [functions.send-due-notifications]
 verify_jwt = false
 

@@ -51,6 +51,20 @@ public struct R2Backend: StorageBackend {
         try await storage.downloadThumbnail(clipId: clipId)
     }
 
+    public func uploadCover(_ data: Data, scheduleId: UUID, ext: String, contentType: String) async throws -> String {
+        try await storage.uploadCover(data, scheduleId: scheduleId, ext: ext, contentType: contentType)
+    }
+
+    /// The edge function resolves the key from the schedule row (RLS-checked),
+    /// so `key` isn't sent.
+    public func downloadCover(scheduleId: UUID, key: String) async throws -> Data {
+        try await storage.downloadCover(scheduleId: scheduleId)
+    }
+
+    public func deleteCover(key: String) async throws {
+        try await storage.deleteObject(key: key)
+    }
+
     public func playbackURL(for clip: Clip) async throws -> URL {
         try await storage.streamURL(clipId: clip.id)
     }

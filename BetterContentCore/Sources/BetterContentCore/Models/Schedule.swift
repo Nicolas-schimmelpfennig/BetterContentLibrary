@@ -17,7 +17,14 @@ public struct Schedule: Codable, Identifiable, Sendable, Hashable {
     public var notifiedAt: Date?
     /// The org member to push a "time to post" notification to (nil = no one).
     public var notifyProfileId: UUID?
+    /// The post's custom thumbnail ("cover"), uploaded at scheduling time —
+    /// a separate file from the clip's auto-generated poster. The key is
+    /// provider-relative, like `Clip.storageKey`; both are nil when no cover.
+    public var coverKey: String?
+    public var coverProvider: StorageProvider?
     public let createdAt: Date
+
+    public var hasCover: Bool { coverKey != nil && coverProvider != nil }
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -32,6 +39,8 @@ public struct Schedule: Codable, Identifiable, Sendable, Hashable {
         case notes
         case notifiedAt = "notified_at"
         case notifyProfileId = "notify_profile_id"
+        case coverKey = "cover_key"
+        case coverProvider = "cover_provider"
         case createdAt = "created_at"
     }
 
@@ -48,6 +57,8 @@ public struct Schedule: Codable, Identifiable, Sendable, Hashable {
         notes: String?,
         notifiedAt: Date?,
         notifyProfileId: UUID? = nil,
+        coverKey: String? = nil,
+        coverProvider: StorageProvider? = nil,
         createdAt: Date
     ) {
         self.id = id
@@ -62,6 +73,8 @@ public struct Schedule: Codable, Identifiable, Sendable, Hashable {
         self.notes = notes
         self.notifiedAt = notifiedAt
         self.notifyProfileId = notifyProfileId
+        self.coverKey = coverKey
+        self.coverProvider = coverProvider
         self.createdAt = createdAt
     }
 }
